@@ -1,4 +1,4 @@
-<?php /** @var array<int,array> $items */ /** @var array<int,array> $ledger */ ?>
+<?php /** @var array<int,array> $items */ /** @var array<int,array> $ledger */ /** @var array{topic:int,reply:int,daily:int} $rates */ ?>
 <div class="breadcrumb"><a href="<?= e(url('/')) ?>">Index</a> &raquo; <a href="<?= e(url('/admin')) ?>">AdminCP</a> &raquo; Shop</div>
 <div class="maintitle">AdminCP — Shop</div>
 <?php \RetroBB\Core\View::partial('admin/_nav', ['active' => '']); ?>
@@ -27,6 +27,15 @@
 </form>
 </div>
 </div>
+<div class="maintitle">Earn rates</div>
+<form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
+  <?= \RetroBB\Core\Csrf::field() ?>
+  <input type="hidden" name="shop_action" value="save_rates">
+  <label>Per topic <input name="earn_topic" inputmode="numeric" size="6" value="<?= (int) $rates['topic'] ?>" required></label>
+  <label>Per reply <input name="earn_reply" inputmode="numeric" size="6" value="<?= (int) $rates['reply'] ?>" required></label>
+  <label>Daily bonus <input name="earn_daily" inputmode="numeric" size="6" value="<?= (int) $rates['daily'] ?>" required></label>
+  <button class="btn" type="submit">Save</button>
+</form>
 <div class="maintitle">Items (<?= count($items) ?>)</div>
 <div class="recent-list">
 <?php foreach ($items as $it): ?>

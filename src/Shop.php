@@ -7,17 +7,18 @@ use PDO;
 use RetroBB\Core\Auth;
 use RetroBB\Core\Csrf;
 use RetroBB\Core\Db;
-use RetroBB\Core\Router;
 
 /**
  * Forum currency ("Credits") + flair shop.
  *
- * Earn: new topic / reply / daily login. Spend: badges, titles, glows that
- * render under the postbit. No core changes needed: pages are served from the
- * `boot` hook (before the core router runs) and flair uses `postbit_after`.
+ * Earn: new topic / reply / daily login bonus. Spend: badges, titles, glows
+ * rendered server-side in the postbit (postbit_user + post_username_html).
+ * Pages ride core routing (routes action); tables come from migrations/*.sql
+ * and seed on plugin_enabled.
  */
 class Shop
 {
+    /** Default earn rates; overridable via plugin settings on /shop/admin. */
     public const EARN_TOPIC = 10;
     public const EARN_REPLY = 5;
     public const EARN_DAILY = 2;
@@ -26,37 +27,72 @@ class Shop
 
     /** @var array<int,int> per-request balance cache */
     private static array $balanceCache = [];
-    /** @var array<string,array>|null topic flair map for this request */
-    private static ?array $pageFlairCache = null;
+    /** @var array<int,array> per-request flair cache */
+    private static array $flairCache = [];
+    /** @var bool */
+    private static bool $seeded = false;
 
     public static function resetCache(): void
     {
         self::$balanceCache = [];
-        self::$pageFlairCache = null;
+        self::$flairCache = [];
+        self::$seeded = false;
     }
 
-    // ---------------- install ----------------
+    // ---------------- settings ----------------
 
-    public static function install(): void
+    /** @return array{topic:int,reply:int,daily:int} */
+    public static function rates(): array
+    {
+        return [
+            'topic' => self::rate('earn_topic', self::EARN_TOPIC),
+            'reply' => self::rate('earn_reply', self::EARN_REPLY),
+            'daily' => self::rate('earn_daily', self::EARN_DAILY),
+        ];
+    }
+
+    private static function rate(string $key, int $fallback): int
+    {
+        $v = function_exists('plugin_setting') ? plugin_setting('forum-shop', $key, '') : '';
+        return $v !== '' ? max(0, min(100000, (int) $v)) : $fallback;
+    }
+
+    private static function setSetting(string $key, string $value): void
     {
         $pdo = Db::pdo();
-        $auto = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite'
-            ? 'INTEGER PRIMARY KEY AUTOINCREMENT'
-            : 'INT AUTO_INCREMENT PRIMARY KEY';
-        $pdo->exec('CREATE TABLE IF NOT EXISTS shop_wallet (user_id INT PRIMARY KEY, balance INT NOT NULL DEFAULT 0)');
-        $pdo->exec("CREATE TABLE IF NOT EXISTS shop_items (id $auto, kind VARCHAR(20) NOT NULL, name VARCHAR(100) NOT NULL, price INT NOT NULL DEFAULT 0, payload VARCHAR(200) NOT NULL DEFAULT '')");
-        $pdo->exec("CREATE TABLE IF NOT EXISTS shop_inventory (id $auto, user_id INT NOT NULL, item_id INT NOT NULL, equipped INT NOT NULL DEFAULT 0, UNIQUE(user_id, item_id))");
-        // shortcut: UNIQUE allows multiple NULLs (MySQL + SQLite), so grants/purchases share the table without colliding; upgrade to partial indexes if a second nullable unique is ever needed
-        $pdo->exec("CREATE TABLE IF NOT EXISTS shop_ledger (id $auto, post_id INT NULL UNIQUE, user_id INT NOT NULL, delta INT NOT NULL, reason VARCHAR(30) NOT NULL, day VARCHAR(10) NULL, created_at VARCHAR(32) NOT NULL)");
-        $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_daily ON shop_ledger (user_id, reason, day)');
-        $n = (int) $pdo->query('SELECT COUNT(*) FROM shop_items')->fetchColumn();
-        if ($n === 0) {
-            $st = $pdo->prepare('INSERT INTO shop_items (kind, name, price, payload) VALUES (?,?,?,?)');
-            foreach (self::defaultItems() as $d) {
-                $st->execute($d);
+        $st = $pdo->prepare('UPDATE settings SET `value` = ? WHERE `key` = ?');
+        $st->execute([$value, 'forum-shop.' . $key]);
+        if ($st->rowCount() === 0) {
+            try {
+                $pdo->prepare('INSERT INTO settings (`key`, `value`) VALUES (?, ?)')->execute(['forum-shop.' . $key, $value]);
+            } catch (\PDOException $e) {
+                if ($e->getCode() !== '23000') {
+                    throw $e;
+                }
             }
         }
     }
+
+    /** @return array{ok:bool,error?:string} */
+    public static function saveRates(int $topic, int $reply, int $daily): array
+    {
+        foreach (['topic' => $topic, 'reply' => $reply, 'daily' => $daily] as $k => $v) {
+            if ($v < 0 || $v > 1000) {
+                return ['ok' => false, 'error' => 'Rates must be 0–1000.'];
+            }
+        }
+        try {
+            self::setSetting('earn_topic', (string) $topic);
+            self::setSetting('earn_reply', (string) $reply);
+            self::setSetting('earn_daily', (string) $daily);
+            return ['ok' => true];
+        } catch (\Throwable $t) {
+            error_log('forum-shop saveRates failed: ' . $t->getMessage());
+            return ['ok' => false, 'error' => 'Could not save rates.'];
+        }
+    }
+
+    // ---------------- lifecycle ----------------
 
     /** @return array<int,array{0:string,1:string,2:int,3:string}> */
     private static function defaultItems(): array
@@ -73,6 +109,43 @@ class Shop
         ];
     }
 
+    /** Seed default items. Runs on plugin_enabled; also lazily on shop pages. */
+    public static function seed(): void
+    {
+        try {
+            $pdo = Db::pdo();
+            $n = (int) $pdo->query('SELECT COUNT(*) FROM shop_items')->fetchColumn();
+            if ($n > 0) {
+                return;
+            }
+            $st = $pdo->prepare('INSERT INTO shop_items (kind, name, price, payload) VALUES (?,?,?,?)');
+            foreach (self::defaultItems() as $d) {
+                $st->execute($d);
+            }
+        } catch (\Throwable $t) {
+            error_log('forum-shop seed failed: ' . $t->getMessage());
+        }
+    }
+
+    public static function onPluginToggled(string $name, bool $enabled): void
+    {
+        if ($name !== basename(FORUMSHOP_DIR)) {
+            return;
+        }
+        if ($enabled) {
+            self::seed();
+        }
+        // Disable keeps all tables: re-enabling restores balances intact.
+    }
+
+    private static function ensureSeeded(): void
+    {
+        if (!self::$seeded) {
+            self::$seeded = true;
+            self::seed();
+        }
+    }
+
     // ---------------- earn ----------------
 
     public static function onTopicCreated(int $tid): void
@@ -85,25 +158,31 @@ class Shop
             if (!$row || (int) $row['user_id'] <= 0) {
                 return;
             }
-            self::award((int) $row['user_id'], self::EARN_TOPIC, 'new_topic', (int) $row['id'], null);
+            self::award((int) $row['user_id'], self::rates()['topic'], 'new_topic', (int) $row['id'], null);
         } catch (\Throwable $t) {
             error_log('forum-shop topic earn failed: ' . $t->getMessage());
         }
     }
 
-    public static function onPostCreated(int $topicId): void
+    public static function onPostCreated(int $topicId, ?int $postId = null, ?int $userId = null): void
     {
         try {
+            if ($postId !== null && $userId !== null) {
+                if ($userId > 0) {
+                    self::award($userId, self::rates()['reply'], 'reply', $postId, null);
+                }
+                return;
+            }
+            // Legacy core (post_created passed only the topic id): pay the
+            // newest unawarded post so each post pays its real author once.
             $pdo = Db::pdo();
-            // Newest post in the topic nobody was paid for yet: each post pays
-            // its real author exactly once, even if events race or repeat.
             $st = $pdo->prepare('SELECT p.id, p.user_id FROM posts p LEFT JOIN shop_ledger l ON l.post_id = p.id WHERE p.topic_id = ? AND l.id IS NULL ORDER BY p.id DESC LIMIT 1');
             $st->execute([$topicId]);
             $row = $st->fetch();
             if (!$row || (int) $row['user_id'] <= 0) {
                 return;
             }
-            self::award((int) $row['user_id'], self::EARN_REPLY, 'reply', (int) $row['id'], null);
+            self::award((int) $row['user_id'], self::rates()['reply'], 'reply', (int) $row['id'], null);
         } catch (\Throwable $t) {
             error_log('forum-shop reply earn failed: ' . $t->getMessage());
         }
@@ -129,7 +208,7 @@ class Shop
         } catch (\Throwable) {
             return;
         }
-        self::award((int) $me['id'], self::EARN_DAILY, 'daily', null, date('Y-m-d'));
+        self::award((int) $me['id'], self::rates()['daily'], 'daily', null, date('Y-m-d'));
     }
 
     /** Idempotent credit. Returns true when the balance moved. */
@@ -202,7 +281,7 @@ class Shop
         return self::$balanceCache[$uid] = $b;
     }
 
-    // ---------------- items / inventory ----------------
+    // ---------------- items / flair ----------------
 
     /** @return array<int,array> */
     public static function allItems(): array
@@ -229,53 +308,57 @@ class Shop
         return $out;
     }
 
-    /**
-     * Equipped flair for every poster on the current topic page, keyed by
-     * username. One query per page; the footer script matches it to each
-     * `.postbit[data-username]` in the DOM.
-     * @return array<string,array{badges:array<int,string>,title:?string,glow:?string}>
-     */
-    public static function pageFlair(?string $path = null): array
+    /** @return array{badges:array<int,string>,title:?string,glow:?string} */
+    public static function flairFor(int $uid): array
     {
-        if (self::$pageFlairCache !== null) {
-            return self::$pageFlairCache;
+        $out = ['badges' => [], 'title' => null, 'glow' => null];
+        if ($uid <= 0) {
+            return $out;
         }
-        $out = [];
+        if (isset(self::$flairCache[$uid])) {
+            return self::$flairCache[$uid];
+        }
         try {
-            $path ??= self::baseStripped(Router::currentPath());
-            if (!preg_match('#\.t(\d+)(?:/page-\d+)?$#', $path, $m)) {
-                return self::$pageFlairCache = $out;
-            }
-            $st = Db::pdo()->prepare('SELECT DISTINCT u.username, i.kind, i.name, i.payload FROM posts p JOIN users u ON u.id = p.user_id JOIN shop_inventory v ON v.user_id = u.id AND v.equipped = 1 JOIN shop_items i ON i.id = v.item_id WHERE p.topic_id = ?');
-            $st->execute([(int) $m[1]]);
+            $st = Db::pdo()->prepare('SELECT i.kind, i.name, i.payload FROM shop_inventory v JOIN shop_items i ON i.id = v.item_id WHERE v.user_id = ? AND v.equipped = 1');
+            $st->execute([$uid]);
             foreach ($st->fetchAll() as $r) {
-                $u = (string) $r['username'];
-                $out[$u] ??= ['badges' => [], 'title' => null, 'glow' => null];
                 if ($r['kind'] === 'badge') {
-                    $out[$u]['badges'][] = (string) $r['name'];
-                } elseif ($r['kind'] === 'title' && $out[$u]['title'] === null) {
-                    $out[$u]['title'] = (string) $r['name'];
-                } elseif ($r['kind'] === 'glow' && $out[$u]['glow'] === null && preg_match('/^#[0-9a-f]{6}$/i', (string) $r['payload'])) {
-                    $out[$u]['glow'] = (string) $r['payload'];
+                    $out['badges'][] = (string) $r['name'];
+                } elseif ($r['kind'] === 'title' && $out['title'] === null) {
+                    $out['title'] = (string) $r['name'];
+                } elseif ($r['kind'] === 'glow' && $out['glow'] === null && preg_match('/^#[0-9a-f]{6}$/i', (string) $r['payload'])) {
+                    $out['glow'] = (string) $r['payload'];
                 }
             }
         } catch (\Throwable) {
         }
-        return self::$pageFlairCache = $out;
+        return self::$flairCache[$uid] = $out;
     }
 
-    /** Decorate each postbit in place: glow on the name, badges beside it, title under it. */
-    public static function footerFlair(): void
+    /**
+     * post_username_html filter: glow on the name, nameless ★ badges left of
+     * it (names survive as tooltips). $post is the core post row.
+     */
+    public static function usernameFlair(string $html, array $post): string
     {
-        $map = self::pageFlair();
-        if (!$map) {
-            return;
+        $f = self::flairFor((int) ($post['user_id'] ?? 0));
+        if ($f['badges'] === [] && $f['glow'] === null) {
+            return $html;
         }
-        $json = json_encode($map, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
-        if (!is_string($json) || $json === '') {
-            return;
+        $out = '';
+        foreach ($f['badges'] as $i => $b) {
+            if ($i > 0) {
+                $out .= ' ';
+            }
+            $out .= '<span class="shop-badge" title="' . e($b) . '"' . ($f['glow'] !== null ? ' style="color:' . e($f['glow']) . '"' : '') . '>★</span>';
         }
-        echo '<script>(function(d){document.querySelectorAll(\'.postbit[data-username]\').forEach(function(pb){var f=d[pb.dataset.username];if(!f)return;var left=pb.querySelector(\'.postleft\');if(!left)return;var pu=left.querySelector(\'.postuser\');if(!pu)return;if(f.glow){var a=pu.querySelector(\'a\');if(a)a.style.color=f.glow;}if(f.badges&&f.badges.length){var fr=document.createDocumentFragment();f.badges.forEach(function(b,i){if(i>0)fr.appendChild(document.createTextNode(\' \'));var s=document.createElement(\'span\');s.className=\'shop-badge\';s.textContent=\'\\u2605\';s.title=b;if(f.glow)s.style.color=f.glow;fr.appendChild(s);});pu.insertBefore(fr,pu.firstChild);}if(f.title){var t=document.createElement(\'div\');t.className=\'shop-title\';t.textContent=f.title;var g=left.querySelector(\'.group\');if(g)g.before(t);else pu.after(t);}});})(' . $json . ');</script>';
+        if ($out !== '') {
+            $out .= ' ';
+        }
+        if ($f['glow'] !== null) {
+            $html = preg_replace('/<a /', '<a style="color:' . e($f['glow']) . '" ', $html, 1) ?? $html;
+        }
+        return $out . $html;
     }
 
     /** @return array{ok:bool,error?:string} */
@@ -320,8 +403,7 @@ class Shop
                 return ['ok' => false, 'error' => 'You already own this.'];
             }
             $pdo->commit();
-            unset(self::$balanceCache[$uid]);
-            self::$pageFlairCache = null;
+            unset(self::$balanceCache[$uid], self::$flairCache[$uid]);
             return ['ok' => true];
         } catch (\Throwable $t) {
             error_log('forum-shop buy failed: ' . $t->getMessage());
@@ -353,7 +435,7 @@ class Shop
                 $msg = 'Equipped.';
             }
             $pdo->commit();
-            self::$pageFlairCache = null;
+            unset(self::$flairCache[$uid]);
             return ['ok' => true, 'error' => $msg];
         } catch (\Throwable $t) {
             error_log('forum-shop equip failed: ' . $t->getMessage());
@@ -414,7 +496,7 @@ class Shop
             $pdo->prepare('DELETE FROM shop_inventory WHERE item_id = ?')->execute([$itemId]);
             $pdo->prepare('DELETE FROM shop_items WHERE id = ?')->execute([$itemId]);
             $pdo->commit();
-            self::$pageFlairCache = null;
+            self::$flairCache = [];
             return ['ok' => true];
         } catch (\Throwable $t) {
             error_log('forum-shop deleteItem failed: ' . $t->getMessage());
@@ -467,129 +549,141 @@ class Shop
         }
     }
 
-    // ---------------- display hooks ----------------
+    // ---------------- display ----------------
 
     public static function headCss(): void
     {
         echo '<style>' .
-            '.shopbar{text-align:center;font-size:12px;padding:4px 8px;background:var(--bar-bg);border-bottom:1px solid var(--border);color:var(--text)}' .
-            '.shopbar a{color:var(--link)}' .
             '.shop-badge{font-size:11px;font-weight:bold}' .
-            '.shop-title{font-size:11px;color:var(--muted)}' .
+            '.shop-ptitle{font-size:11px;color:var(--muted);order:3}' .
+            '.postleft{display:flex;flex-direction:column;align-items:center;gap:2px}' .
+            '.postleft .postuser{order:2}' .
+            '.postleft .group{order:4}' .
+            '.postleft .postmeta{order:5}' .
             '.shop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin-top:8px}' .
             '.shop-card{border:1px solid var(--border);background:var(--row);padding:8px 10px}' .
             '.shop-card .price{color:var(--muted);font-size:11px}' .
             '.shop-card .swatch{display:inline-block;width:12px;height:12px;border:1px solid var(--border);vertical-align:-1px}' .
+            '.shop-usercard{display:flex;gap:8px;align-items:center}' .
+            '.shop-usercard .bal{font-size:15px;font-weight:bold}' .
             '.shopform label{display:block;margin:6px 0;font-size:12px}' .
             '.shopform input,.shopform select{background:var(--input-bg);color:var(--input-text);border:1px solid var(--border);padding:4px 6px;font:inherit}' .
             '</style>';
     }
 
-    public static function headerChip(): void
+    // ---------------- routes ----------------
+
+    /** Register with core routing: canonical-host 301s and the shared 404 come free. */
+    public static function registerRoutes(object $r): void
     {
-        self::maybeDaily();
+        $r->get('#^/shop$#', function () { Shop::shopPage(); });
+        $r->post('#^/shop/buy$#', function () { Shop::buySubmit(); });
+        $r->post('#^/shop/equip$#', function () { Shop::equipSubmit(); });
+        $r->get('#^/wallet$#', function () { Shop::walletPage(); });
+        $r->get('#^/shop/admin$#', function () { Shop::adminPage(); });
+        $r->post('#^/shop/admin$#', function () { Shop::adminSubmit(); });
+    }
+
+    public static function shopPage(): void
+    {
+        self::ensureSeeded();
+        $me = Auth::user();
+        $uid = $me ? (int) $me['id'] : 0;
+        self::page('shop', [
+            'items' => self::allItems(),
+            'owned' => $uid > 0 ? self::ownedMap($uid) : [],
+            'balance' => $uid > 0 ? self::balance($uid) : 0,
+            'rates' => self::rates(),
+        ], 'Shop');
+    }
+
+    public static function buySubmit(): void
+    {
         $me = Auth::user();
         if (!$me) {
+            redirect('/login?next=' . urlencode('/shop'));
+        }
+        if (!Csrf::verify($_POST['csrf'] ?? null)) {
+            http_response_code(419);
+            echo 'CSRF mismatch';
             return;
         }
-        $bal = self::balance((int) $me['id']);
-        echo '<div class="shopbar">💰 <b>' . (int) $bal . ' Credits</b> · <a href="' . e(url('/shop')) . '">Shop</a> · <a href="' . e(url('/wallet')) . '">Wallet</a></div>';
+        $r = self::buy((int) $me['id'], (int) ($_POST['item_id'] ?? 0));
+        self::flash($r['ok'] ? 'Purchase complete — equip it below.' : (string) ($r['error'] ?? 'Failed.'), $r['ok']);
+        redirect(url('/shop'));
     }
 
-    // ---------------- routing (boot hook) ----------------
-
-    public static function route(): void
+    public static function equipSubmit(): void
     {
-        $path = self::baseStripped(Router::currentPath());
-        $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-        if ($path === '/shop' && $method === 'GET') {
-            $me = Auth::user();
-            $uid = $me ? (int) $me['id'] : 0;
-            self::page('shop', [
-                'items' => self::allItems(),
-                'owned' => $uid > 0 ? self::ownedMap($uid) : [],
-                'balance' => $uid > 0 ? self::balance($uid) : 0,
-            ], 'Shop');
-        } elseif ($path === '/shop/buy' && $method === 'POST') {
-            $me = Auth::user();
-            if (!$me) {
-                redirect('/login?next=' . urlencode('/shop'));
-            }
-            if (!Csrf::verify($_POST['csrf'] ?? null)) {
-                http_response_code(419);
-                echo 'CSRF mismatch';
-                self::stop();
-                return;
-            }
-            $r = self::buy((int) $me['id'], (int) ($_POST['item_id'] ?? 0));
-            self::flash($r['ok'] ? 'Purchase complete — equip it below.' : (string) ($r['error'] ?? 'Failed.'), $r['ok']);
-            redirect(url('/shop'));
-        } elseif ($path === '/shop/equip' && $method === 'POST') {
-            $me = Auth::user();
-            if (!$me) {
-                redirect('/login?next=' . urlencode('/shop'));
-            }
-            if (!Csrf::verify($_POST['csrf'] ?? null)) {
-                http_response_code(419);
-                echo 'CSRF mismatch';
-                self::stop();
-                return;
-            }
-            $r = self::equip((int) $me['id'], (int) ($_POST['item_id'] ?? 0));
-            self::flash((string) ($r['error'] ?? 'Done.'), $r['ok']);
-            redirect(url('/shop'));
-        } elseif ($path === '/wallet' && $method === 'GET') {
-            $me = Auth::user();
-            if (!$me) {
-                redirect('/login?next=' . urlencode('/wallet'));
-            }
-            $uid = (int) $me['id'];
-            self::page('wallet', [
-                'balance' => self::balance($uid),
-                'ledger' => self::ledgerFor($uid),
-            ], 'Wallet');
-        } elseif ($path === '/shop/admin') {
-            if (!Auth::isAdmin()) {
-                http_response_code(403);
-                echo 'Forbidden';
-                self::stop();
-                return;
-            }
-            if ($method === 'POST') {
-                if (!Csrf::verify($_POST['csrf'] ?? null)) {
-                    http_response_code(419);
-                    echo 'CSRF mismatch';
-                    self::stop();
-                    return;
-                }
-                $action = (string) ($_POST['shop_action'] ?? '');
-                if ($action === 'add_item') {
-                    $r = self::addItem((string) ($_POST['name'] ?? ''), (string) ($_POST['kind'] ?? ''), (int) ($_POST['price'] ?? 0), (string) ($_POST['payload'] ?? ''));
-                } elseif ($action === 'grant') {
-                    $r = self::grant((string) ($_POST['username'] ?? ''), (int) ($_POST['amount'] ?? 0));
-                } elseif ($action === 'delete_item') {
-                    $r = self::deleteItem((int) ($_POST['item_id'] ?? 0));
-                } else {
-                    $r = ['ok' => false, 'error' => 'Unknown action.'];
-                }
-                self::flash($r['ok'] ? 'Saved.' : (string) ($r['error'] ?? 'Failed.'), $r['ok']);
-                redirect(url('/shop/admin'));
-            }
-            self::page('admin', [
-                'items' => self::allItems(),
-                'ledger' => self::recentLedger(),
-            ], 'Shop admin');
+        $me = Auth::user();
+        if (!$me) {
+            redirect('/login?next=' . urlencode('/shop'));
         }
-        // Not ours — fall through to the core router.
+        if (!Csrf::verify($_POST['csrf'] ?? null)) {
+            http_response_code(419);
+            echo 'CSRF mismatch';
+            return;
+        }
+        $r = self::equip((int) $me['id'], (int) ($_POST['item_id'] ?? 0));
+        self::flash((string) ($r['error'] ?? 'Done.'), $r['ok']);
+        redirect(url('/shop'));
     }
 
-    private static function baseStripped(string $path): string
+    public static function walletPage(): void
     {
-        $bp = base_path();
-        if ($bp !== '' && ($path === $bp || str_starts_with($path, $bp . '/'))) {
-            $path = substr($path, strlen($bp)) ?: '/';
+        $me = Auth::user();
+        if (!$me) {
+            redirect('/login?next=' . urlencode('/wallet'));
         }
-        return $path;
+        $uid = (int) $me['id'];
+        self::page('wallet', [
+            'balance' => self::balance($uid),
+            'ledger' => self::ledgerFor($uid),
+            'rates' => self::rates(),
+        ], 'Wallet');
+    }
+
+    public static function adminPage(): void
+    {
+        if (!Auth::isAdmin()) {
+            http_response_code(403);
+            echo 'Forbidden';
+            return;
+        }
+        self::ensureSeeded();
+        self::page('admin', [
+            'items' => self::allItems(),
+            'ledger' => self::recentLedger(),
+            'rates' => self::rates(),
+        ], 'Shop admin');
+    }
+
+    public static function adminSubmit(): void
+    {
+        if (!Auth::isAdmin()) {
+            http_response_code(403);
+            echo 'Forbidden';
+            return;
+        }
+        if (!Csrf::verify($_POST['csrf'] ?? null)) {
+            http_response_code(419);
+            echo 'CSRF mismatch';
+            return;
+        }
+        $action = (string) ($_POST['shop_action'] ?? '');
+        if ($action === 'add_item') {
+            $r = self::addItem((string) ($_POST['name'] ?? ''), (string) ($_POST['kind'] ?? ''), (int) ($_POST['price'] ?? 0), (string) ($_POST['payload'] ?? ''));
+        } elseif ($action === 'grant') {
+            $r = self::grant((string) ($_POST['username'] ?? ''), (int) ($_POST['amount'] ?? 0));
+        } elseif ($action === 'delete_item') {
+            $r = self::deleteItem((int) ($_POST['item_id'] ?? 0));
+        } elseif ($action === 'save_rates') {
+            $r = self::saveRates((int) ($_POST['earn_topic'] ?? 0), (int) ($_POST['earn_reply'] ?? 0), (int) ($_POST['earn_daily'] ?? 0));
+        } else {
+            $r = ['ok' => false, 'error' => 'Unknown action.'];
+        }
+        self::flash($r['ok'] ? 'Saved.' : (string) ($r['error'] ?? 'Failed.'), $r['ok']);
+        redirect(url('/shop/admin'));
     }
 
     /** @param array<string,mixed> $vars */
@@ -605,14 +699,6 @@ class Shop
             require $layout;
         } else {
             echo $content; // bare context (tests): no layout available
-        }
-        self::stop();
-    }
-
-    private static function stop(): void
-    {
-        if (!defined('FORUMSHOP_NO_EXIT')) {
-            exit;
         }
     }
 

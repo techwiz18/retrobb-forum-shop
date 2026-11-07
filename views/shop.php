@@ -1,8 +1,8 @@
-<?php /** @var array<int,array> $items */ /** @var array<int,int> $owned */ /** @var int $balance */
+<?php /** @var array<int,array> $items */ /** @var array<int,int> $owned */ /** @var int $balance */ /** @var array{topic:int,reply:int,daily:int} $rates */
 $me = \RetroBB\Core\Auth::user(); ?>
 <div class="breadcrumb"><a href="<?= e(url('/')) ?>">Index</a> &raquo; Shop</div>
 <div class="maintitle">Flair Shop<?php if ($me): ?> — <?= (int) $balance ?> Credits<?php endif; ?></div>
-<div class="subtitle"><?php if ($me): ?>Earn <?= \ForumShop\Shop::EARN_TOPIC ?>/topic, <?= \ForumShop\Shop::EARN_REPLY ?>/reply, <?= \ForumShop\Shop::EARN_DAILY ?>/day.<?php else: ?><a href="<?= e(url('/login?next=' . urlencode('/shop'))) ?>">Log in</a> to buy flair. Posting earns Credits (<?= \ForumShop\Shop::EARN_TOPIC ?>/topic, <?= \ForumShop\Shop::EARN_REPLY ?>/reply, <?= \ForumShop\Shop::EARN_DAILY ?>/day).<?php endif; ?></div>
+<div class="subtitle"><?php if ($me): ?>Earn <?= (int) $rates['topic'] ?>/topic, <?= (int) $rates['reply'] ?>/reply, <?= (int) $rates['daily'] ?>/day.<?php else: ?><a href="<?= e(url('/login?next=' . urlencode('/shop'))) ?>">Log in</a> to buy flair. Posting earns Credits (<?= (int) $rates['topic'] ?>/topic, <?= (int) $rates['reply'] ?>/reply, <?= (int) $rates['daily'] ?>/day).<?php endif; ?></div>
 <?php $byKind = [];
 foreach ($items as $it) { $byKind[$it['kind']][] = $it; } ?>
 <?php foreach (['badge' => 'Badges', 'title' => 'Titles', 'glow' => 'Glows'] as $kind => $label): ?>
