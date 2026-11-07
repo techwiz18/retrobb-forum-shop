@@ -3,50 +3,53 @@
 <div class="maintitle">AdminCP — Shop</div>
 <?php \RetroBB\Core\View::partial('admin/_nav', ['active' => '']); ?>
 <p class="muted">Flair items and Credit grants. Purchases and awards are journaled below.</p>
-<div class="shop-grid">
-<div class="shop-card">
-<b>Add item</b>
+<div class="shop-anchors"><a href="#shop-add">Add item</a> · <a href="#shop-grant">Grant Credits</a> · <a href="#shop-rates">Earn rates</a> · <a href="#shop-items">Items (<?= count($items) ?>)</a> · <a href="#shop-ledger">Transactions</a></div>
+<div class="maintitle" id="shop-add">Add item</div>
 <form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
   <?= \RetroBB\Core\Csrf::field() ?>
   <input type="hidden" name="shop_action" value="add_item">
-  <label>Name <input name="name" maxlength="60" size="24" required></label>
-  <label>Kind <select name="kind"><option value="badge">badge</option><option value="title">title</option><option value="glow">glow</option></select></label>
-  <label>Price <input name="price" inputmode="numeric" size="8" value="50" required></label>
-  <label>Color (glow only) <input name="payload" placeholder="#c0392b" size="8" maxlength="7"></label>
+  <div class="frow"><label for="shop-in-name">Name</label><input id="shop-in-name" name="name" maxlength="60" size="30" required></div>
+  <div class="frow"><label for="shop-in-kind">Kind</label><select id="shop-in-kind" name="kind"><option value="badge">badge</option><option value="title">title</option><option value="glow">glow</option></select></div>
+  <div class="frow"><label for="shop-in-price">Price</label><input id="shop-in-price" name="price" inputmode="numeric" size="8" value="50" required></div>
+  <div class="frow"><label for="shop-in-payload">Color (glow only)</label><input id="shop-in-payload" name="payload" placeholder="#c0392b" size="8" maxlength="7"></div>
   <button class="btn" type="submit">Add</button>
 </form>
-</div>
-<div class="shop-card">
-<b>Grant Credits</b>
+<div class="maintitle" id="shop-grant">Grant Credits</div>
 <form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
   <?= \RetroBB\Core\Csrf::field() ?>
   <input type="hidden" name="shop_action" value="grant">
-  <label>User <input name="username" size="20" required></label>
-  <label>Amount <input name="amount" inputmode="numeric" size="8" required></label>
+  <div class="frow"><label for="shop-in-user">User</label><input id="shop-in-user" name="username" size="20" required></div>
+  <div class="frow"><label for="shop-in-amount">Amount</label><input id="shop-in-amount" name="amount" inputmode="numeric" size="8" required></div>
   <button class="btn" type="submit">Grant</button>
 </form>
-</div>
-</div>
-<div class="maintitle">Earn rates</div>
+<div class="maintitle" id="shop-rates">Earn rates</div>
 <form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
   <?= \RetroBB\Core\Csrf::field() ?>
   <input type="hidden" name="shop_action" value="save_rates">
-  <label>Per topic <input name="earn_topic" inputmode="numeric" size="6" value="<?= (int) $rates['topic'] ?>" required></label>
-  <label>Per reply <input name="earn_reply" inputmode="numeric" size="6" value="<?= (int) $rates['reply'] ?>" required></label>
-  <label>Daily bonus <input name="earn_daily" inputmode="numeric" size="6" value="<?= (int) $rates['daily'] ?>" required></label>
+  <div class="frow"><label for="shop-in-topic">Per topic</label><input id="shop-in-topic" name="earn_topic" inputmode="numeric" size="6" value="<?= (int) $rates['topic'] ?>" required></div>
+  <div class="frow"><label for="shop-in-reply">Per reply</label><input id="shop-in-reply" name="earn_reply" inputmode="numeric" size="6" value="<?= (int) $rates['reply'] ?>" required></div>
+  <div class="frow"><label for="shop-in-daily">Daily bonus</label><input id="shop-in-daily" name="earn_daily" inputmode="numeric" size="6" value="<?= (int) $rates['daily'] ?>" required></div>
   <button class="btn" type="submit">Save</button>
 </form>
-<div class="maintitle">Items (<?= count($items) ?>)</div>
-<div class="recent-list">
+<div class="maintitle" id="shop-items">Items (<?= count($items) ?>)</div>
+<?php if ($items): ?>
+<table class="shop-table">
+<thead><tr><th>Name</th><th>Kind</th><th class="num">Price</th><th></th></tr></thead>
+<tbody>
 <?php foreach ($items as $it): ?>
-<div class="recent-row"><span><b><?= e($it['name']) ?></b> <span class="muted">[<?= e($it['kind']) ?>]</span><?php if ($it['kind'] === 'glow'): ?> <span class="swatch" style="background:<?= e($it['payload']) ?>"></span><?php endif; ?></span><span><span class="muted"><?= (int) $it['price'] ?> Credits</span> <form method="post" action="<?= e(url('/shop/admin')) ?>" style="display:inline" onsubmit="return confirm('Delete this item? Owners lose it with no refund.')"><?= \RetroBB\Core\Csrf::field() ?><input type="hidden" name="shop_action" value="delete_item"><input type="hidden" name="item_id" value="<?= (int) $it['id'] ?>"><button class="smallbtn danger" type="submit">Delete</button></form></span></div>
+<tr><td><b><?= e($it['name']) ?></b><?php if ($it['kind'] === 'glow'): ?> <span class="swatch" style="background:<?= e($it['payload']) ?>"></span><?php endif; ?></td><td><?= e($it['kind']) ?></td><td class="num"><?= (int) $it['price'] ?></td><td><form method="post" action="<?= e(url('/shop/admin')) ?>" style="display:inline" onsubmit="return confirm('Delete this item? Owners lose it with no refund.')"><?= \RetroBB\Core\Csrf::field() ?><input type="hidden" name="shop_action" value="delete_item"><input type="hidden" name="item_id" value="<?= (int) $it['id'] ?>"><button class="smallbtn danger" type="submit">Delete</button></form></td></tr>
 <?php endforeach; ?>
-<?php if (!$items): ?><div class="empty">No items yet.</div><?php endif; ?>
-</div>
-<div class="maintitle">Recent transactions</div>
-<div class="recent-list">
+</tbody>
+</table>
+<?php else: ?><div class="empty">No items yet.</div><?php endif; ?>
+<div class="maintitle" id="shop-ledger">Recent transactions</div>
+<?php if ($ledger): ?>
+<table class="shop-table">
+<thead><tr><th>User</th><th class="num">Change</th><th>Reason</th><th>When</th></tr></thead>
+<tbody>
 <?php foreach ($ledger as $r): ?>
-<div class="recent-row"><span><?= e($r['username'] ?? '?') ?> <?= ((int) $r['delta'] >= 0 ? '+' : '') . (int) $r['delta'] ?> <span class="muted">— <?= e($r['reason']) ?></span></span><span class="muted"><?= e($r['created_at']) ?></span></div>
+<tr><td><?= e($r['username'] ?? '?') ?></td><td class="num"><?= ((int) $r['delta'] >= 0 ? '+' : '') . (int) $r['delta'] ?></td><td><?= e($r['reason']) ?></td><td class="muted"><?= e($r['created_at']) ?></td></tr>
 <?php endforeach; ?>
-<?php if (!$ledger): ?><div class="empty">No transactions yet.</div><?php endif; ?>
-</div>
+</tbody>
+</table>
+<?php else: ?><div class="empty">No transactions yet.</div><?php endif; ?>

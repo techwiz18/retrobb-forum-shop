@@ -583,6 +583,13 @@ class Shop
             '.shop-usercard .bal{font-size:15px;font-weight:bold}' .
             '.shopform label{display:block;margin:6px 0;font-size:12px}' .
             '.shopform input,.shopform select{background:var(--input-bg);color:var(--input-text);border:1px solid var(--border);padding:4px 6px;font:inherit}' .
+            '.shop-anchors{margin:8px 0;font-size:12px}' .
+            '.shopform .frow{display:flex;align-items:center;gap:8px;margin:6px 0}' .
+            '.shopform .frow>label{width:150px;flex:none;margin:0}' .
+            '.shop-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}' .
+            '.shop-table th,.shop-table td{border:1px solid var(--border);padding:5px 8px;text-align:left}' .
+            '.shop-table th{background:var(--bar-bg)}' .
+            '.shop-table td.num,.shop-table th.num{text-align:right}' .
             '</style>';
     }
 
