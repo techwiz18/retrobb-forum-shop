@@ -446,7 +446,7 @@ class Shop
             '.shopbar{text-align:center;font-size:12px;padding:4px 8px;background:var(--bar-bg);border-bottom:1px solid var(--border);color:var(--text)}' .
             '.shopbar a{color:var(--link)}' .
             '.shop-badge{font-size:11px;font-weight:bold}' .
-            '.shop-title{font-size:11px;font-style:italic;color:var(--muted)}' .
+            '.shop-title{font-size:11px;color:var(--muted)}' .
             '.shop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin-top:8px}' .
             '.shop-card{border:1px solid var(--border);background:var(--row);padding:8px 10px}' .
             '.shop-card .price{color:var(--muted);font-size:11px}' .
