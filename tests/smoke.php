@@ -230,6 +230,15 @@ namespace {
     ob_start();
     Hooks::render_template_hook('admin_nav', []);
     check('admin nav partial links shop admin', str_contains((string) ob_get_clean(), '/shop/admin'));
+    Router::$path = '/shop/admin';
+    ob_start();
+    Hooks::render_template_hook('admin_nav', []);
+    check('admin nav active on shop pages', str_contains((string) ob_get_clean(), 'class="on"'));
+    Router::$path = '/admin';
+    ob_start();
+    Hooks::render_template_hook('admin_nav', []);
+    check('admin nav inactive elsewhere', !str_contains((string) ob_get_clean(), 'class="on"'));
+    Router::$path = '/';
     ob_start();
     Hooks::render_template_hook('admin_dashboard', []);
     $html = (string) ob_get_clean();
