@@ -419,7 +419,19 @@ class Shop
 
     public static function headCss(): void
     {
-        echo '<style>.shopbar{text-align:center;font-size:12px;padding:3px;background:#f4f4e8;border-bottom:1px solid #999}.shop-flair{margin:4px 0;font-size:12px}.shop-badge{font-weight:bold;margin-right:8px}.shop-title{font-style:italic}</style>';
+        echo '<style>' .
+            '.shopbar{text-align:center;font-size:12px;padding:4px 8px;background:var(--bar-bg);border-bottom:1px solid var(--border);color:var(--text)}' .
+            '.shopbar a{color:var(--link)}' .
+            '.shop-flair{margin:6px 0 0;font-size:11px;color:var(--muted)}' .
+            '.shop-badge{font-weight:bold;margin-right:8px}' .
+            '.shop-title{font-style:italic}' .
+            '.shop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin-top:8px}' .
+            '.shop-card{border:1px solid var(--border);background:var(--row);padding:8px 10px}' .
+            '.shop-card .price{color:var(--muted);font-size:11px}' .
+            '.shop-card .swatch{display:inline-block;width:12px;height:12px;border:1px solid var(--border);vertical-align:-1px}' .
+            '.shopform label{display:block;margin:6px 0;font-size:12px}' .
+            '.shopform input,.shopform select{background:var(--input-bg);color:var(--input-text);border:1px solid var(--border);padding:4px 6px;font:inherit}' .
+            '</style>';
     }
 
     public static function headerChip(): void
