@@ -128,6 +128,7 @@ namespace {
     \RetroBB\Models\Topic::$topics = [1 => ['id' => 1, 'forum_id' => 5]];
 
     require dirname(__DIR__) . '/bootstrap.php';
+    $plug = basename(dirname(__DIR__)); // settings prefix follows the dir name
 
     check('routes registered', isset(Hooks::$actions['routes'][0]));
     $fr = new FakeRouter();
@@ -169,25 +170,25 @@ namespace {
     check('daily once per day', Shop::balance(1) === 17);
 
     // --- configurable rates + currency ---
-    $GLOBALS['psettings'] = ['forum-shop.earn_topic' => '25'];
+    $GLOBALS['psettings'] = [$plug . '.earn_topic' => '25'];
     check('rate override', Shop::rates()['topic'] === 25 && Shop::rates()['reply'] === 5);
     $GLOBALS['psettings'] = [];
-    $GLOBALS['psettings']['forum-shop.currency'] = 'Coins';
+    $GLOBALS['psettings'][$plug . '.currency'] = 'Coins';
     check('currency override', Shop::currency() === 'Coins');
     $GLOBALS['psettings'] = [];
     check('currency falls back', Shop::currency() === 'Credits');
-    check('saveRates stores currency', Shop::saveRates(11, 6, 3, 'Coins')['ok'] && $pdo->query("SELECT `value` FROM settings WHERE `key`='forum-shop.currency'")->fetchColumn() === 'Coins');
+    check('saveRates stores currency', Shop::saveRates(11, 6, 3, 'Coins')['ok'] && $pdo->query("SELECT `value` FROM settings WHERE `key`='" . $plug . ".currency'")->fetchColumn() === 'Coins');
     check('saveRates clears currency', Shop::saveRates(10, 5, 2, '')['ok'] && Shop::currency() === 'Credits');
     check('currency too long rejected', !Shop::saveRates(10, 5, 2, str_repeat('x', 21))['ok']);
 
     // --- per-forum rates (isolated user carol, forum 7) ---
     $pdo->exec("INSERT INTO posts (topic_id, user_id, body_bbcode) VALUES (2,4,'carol here')");
     \RetroBB\Models\Topic::$topics[2] = ['id' => 2, 'forum_id' => 7];
-    $GLOBALS['psettings'] = ['forum-shop.forum_7_topic' => '30'];
+    $GLOBALS['psettings'] = [$plug . '.forum_7_topic' => '30'];
     check('forum topic rate override', Shop::forumRate(7, 'topic') === 30 && Shop::forumRate(7, 'reply') === 5);
     Hooks::do_action('topic_created', 2);
     check('forum topic rate paid', Shop::balance(4) === 30);
-    $GLOBALS['psettings']['forum-shop.forum_7_reply'] = '9';
+    $GLOBALS['psettings'][$plug . '.forum_7_reply'] = '9';
     $pdo->exec("INSERT INTO posts (topic_id, user_id, body_bbcode) VALUES (2,4,'carol again')");
     $carolReply = (int) $pdo->lastInsertId();
     Hooks::do_action('post_created', 2, $carolReply, 4);
@@ -362,13 +363,13 @@ namespace {
         Shop::adminSubmit();
     } catch (TestRedirect) {
     }
-    check('rates persist to settings', $pdo->query("SELECT `value` FROM settings WHERE `key`='forum-shop.earn_topic'")->fetchColumn() === '11');
+    check('rates persist to settings', $pdo->query("SELECT `value` FROM settings WHERE `key`='" . $plug . ".earn_topic'")->fetchColumn() === '11');
     $_POST = ['csrf' => 't', 'shop_action' => 'save_forum_rates', 'rate_topic' => [5 => 12], 'rate_reply' => [5 => 7]];
     try {
         Shop::adminSubmit();
         check('forum rates submit redirects', false);
     } catch (TestRedirect $e) {
-        check('forum rates submit saves', $e->to === '/shop/admin' && $pdo->query("SELECT `value` FROM settings WHERE `key`='forum-shop.forum_5_topic'")->fetchColumn() === '12' && $pdo->query("SELECT `value` FROM settings WHERE `key`='forum-shop.forum_5_reply'")->fetchColumn() === '7');
+        check('forum rates submit saves', $e->to === '/shop/admin' && $pdo->query("SELECT `value` FROM settings WHERE `key`='" . $plug . ".forum_5_topic'")->fetchColumn() === '12' && $pdo->query("SELECT `value` FROM settings WHERE `key`='" . $plug . ".forum_5_reply'")->fetchColumn() === '7');
     }
 
     // --- delete ---
@@ -379,6 +380,13 @@ namespace {
     check('delete strips owners', Shop::deleteItem($delId)['ok'] && !isset(Shop::ownedMap(2)[$delId]));
     check('deleted item unbuyable', Shop::buy(2, $delId)['error'] === 'No such item.');
     check('bad glow rejected', !Shop::addItem('X', 'glow', 5, 'red')['ok']);
+
+    // --- uninstall: must come last (drops tables) ---
+    $countTables = fn() => (int) $pdo->query("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('shop_wallet','shop_items','shop_inventory','shop_ledger')")->fetchColumn();
+    Shop::onPluginUninstalled('some-other-plugin');
+    check('uninstall ignores other plugins', $countTables() === 4);
+    Hooks::do_action('plugin_uninstalled', $plug);
+    check('uninstall drops shop tables', $countTables() === 0);
 
     echo $fail === 0 ? "ALL PASS\n" : "$fail FAILURES\n";
     exit($fail === 0 ? 0 : 1);

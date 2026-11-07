@@ -51,9 +51,16 @@ class Shop
         ];
     }
 
+    /** Settings live under "<plugin-dir-name>.*": core's uninstall cleanup
+        keys off the directory name, so the prefix must match it. */
+    private static function prefix(): string
+    {
+        return basename(FORUMSHOP_DIR) . '.';
+    }
+
     private static function rate(string $key, int $fallback): int
     {
-        $v = function_exists('plugin_setting') ? plugin_setting('forum-shop', $key, '') : '';
+        $v = function_exists('plugin_setting') ? plugin_setting(rtrim(self::prefix(), '.'), $key, '') : '';
         return $v !== '' ? max(0, min(100000, (int) $v)) : $fallback;
     }
 
@@ -61,10 +68,10 @@ class Shop
     {
         $pdo = Db::pdo();
         $st = $pdo->prepare('UPDATE settings SET `value` = ? WHERE `key` = ?');
-        $st->execute([$value, 'forum-shop.' . $key]);
+        $st->execute([$value, self::prefix() . $key]);
         if ($st->rowCount() === 0) {
             try {
-                $pdo->prepare('INSERT INTO settings (`key`, `value`) VALUES (?, ?)')->execute(['forum-shop.' . $key, $value]);
+                $pdo->prepare('INSERT INTO settings (`key`, `value`) VALUES (?, ?)')->execute([self::prefix() . $key, $value]);
             } catch (\PDOException $e) {
                 if ($e->getCode() !== '23000') {
                     throw $e;
@@ -76,7 +83,7 @@ class Shop
     private static function delSetting(string $key): void
     {
         try {
-            Db::pdo()->prepare('DELETE FROM settings WHERE `key` = ?')->execute(['forum-shop.' . $key]);
+            Db::pdo()->prepare('DELETE FROM settings WHERE `key` = ?')->execute([self::prefix() . $key]);
         } catch (\Throwable $t) {
             error_log('forum-shop delSetting failed: ' . $t->getMessage());
         }
@@ -84,7 +91,7 @@ class Shop
 
     public static function currency(): string
     {
-        $v = function_exists('plugin_setting') ? trim(plugin_setting('forum-shop', 'currency', '')) : '';
+        $v = function_exists('plugin_setting') ? trim(plugin_setting(rtrim(self::prefix(), '.'), 'currency', '')) : '';
         if ($v === '' || mb_strlen($v) > 20) {
             return 'Credits';
         }
@@ -123,7 +130,7 @@ class Shop
     public static function forumRate(int $fid, string $kind): int
     {
         if ($fid > 0 && in_array($kind, ['topic', 'reply'], true)) {
-            $v = function_exists('plugin_setting') ? plugin_setting('forum-shop', "forum_{$fid}_{$kind}", '') : '';
+            $v = function_exists('plugin_setting') ? plugin_setting(rtrim(self::prefix(), '.'), "forum_{$fid}_{$kind}", '') : '';
             if ($v !== '' && (int) $v >= 0) {
                 return max(0, min(1000, (int) $v));
             }
@@ -204,6 +211,24 @@ class Shop
             self::seed();
         }
         // Disable keeps all tables: re-enabling restores balances intact.
+    }
+
+    /** Explicit uninstall (core #22, super-only + confirmed): drop our tables.
+        Core already forgets our plugins row and "<dirname>.*" settings. */
+    public static function onPluginUninstalled(string $name): void
+    {
+        if ($name !== basename(FORUMSHOP_DIR)) {
+            return;
+        }
+        try {
+            $pdo = Db::pdo();
+            foreach (['shop_inventory', 'shop_ledger', 'shop_items', 'shop_wallet'] as $t) {
+                $pdo->exec("DROP TABLE IF EXISTS $t");
+            }
+            self::resetCache();
+        } catch (\Throwable $t) {
+            error_log('forum-shop uninstall failed: ' . $t->getMessage());
+        }
     }
 
     private static function ensureSeeded(): void

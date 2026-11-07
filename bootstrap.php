@@ -21,6 +21,7 @@ try {
     Hooks::add_action('header', [Shop::class, 'maybeDaily']);
     Hooks::add_action('plugin_enabled', function ($name) { Shop::onPluginToggled((string) $name, true); });
     Hooks::add_action('plugin_disabled', function ($name) { Shop::onPluginToggled($name, false); });
+    Hooks::add_action('plugin_uninstalled', function ($name) { Shop::onPluginUninstalled((string) $name); });
     Hooks::add_filter('post_username_html', [Shop::class, 'usernameFlair']);
     Hooks::add_action('head', [Shop::class, 'headCss']);
     Hooks::add_template_hook('nav_links', __DIR__ . '/views/nav.php');

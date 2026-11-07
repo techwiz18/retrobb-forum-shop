@@ -27,9 +27,11 @@ AdminCP → Plugins. No core changes required.
   `userbox`, wallet card on profiles via `profile_after`.
 - **Postbit** (#18): badges + name glow via the `post_username_html` filter,
   title via the `postbit_user` template hook — all server-side, no JS.
-- **Lifecycle** (#20): tables live in `migrations/001_shop.sql` (applied once
+- **Lifecycle** (#20, #22): tables live in `migrations/001_shop.sql` (applied once
   by `bin/migrate.php`); defaults seed on `plugin_enabled`; disable keeps all
-  data. Earn rates are plugin settings, editable on `/shop/admin`.
+  data; super-admin Uninstall drops the tables via `plugin_uninstalled`, and
+  core forgets the settings. Earn rates are plugin settings, editable on
+  `/shop/admin`.
 - **Earn events**: `post_created` now passes post + author ids (direct award,
   ledger-deduped); legacy single-arg calls still work via re-query fallback.
 
