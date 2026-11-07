@@ -184,18 +184,37 @@ class Shop
         ];
     }
 
-    /** Seed default items. Runs on plugin_enabled; also lazily on shop pages. */
+    /** Seed default items. Runs on plugin_enabled; also lazily on shop pages.
+        Idempotent: per-item existence check plus the unique key from 002. */
     public static function seed(): void
     {
         try {
             $pdo = Db::pdo();
-            $n = (int) $pdo->query('SELECT COUNT(*) FROM shop_items')->fetchColumn();
-            if ($n > 0) {
+            $defaults = self::defaultItems();
+            $st = $pdo->prepare('INSERT INTO shop_items (kind, name, price, payload) VALUES (?,?,?,?)');
+            $have = (int) $pdo->query('SELECT COUNT(*) FROM shop_items')->fetchColumn();
+            if ($have === 0) {
+                foreach ($defaults as $d) {
+                    $st->execute($d);
+                }
                 return;
             }
-            $st = $pdo->prepare('INSERT INTO shop_items (kind, name, price, payload) VALUES (?,?,?,?)');
-            foreach (self::defaultItems() as $d) {
-                $st->execute($d);
+            if ($have >= count($defaults)) {
+                return; // complete (or customized): nothing to repair
+            }
+            $chk = $pdo->prepare('SELECT id FROM shop_items WHERE kind = ? AND name = ? LIMIT 1');
+            foreach ($defaults as $d) {
+                $chk->execute([$d[0], $d[1]]);
+                if ($chk->fetch()) {
+                    continue;
+                }
+                try {
+                    $st->execute($d);
+                } catch (\PDOException $e) {
+                    if ($e->getCode() !== '23000') {
+                        throw $e;
+                    }
+                }
             }
         } catch (\Throwable $t) {
             error_log('forum-shop seed failed: ' . $t->getMessage());
@@ -321,26 +340,17 @@ class Shop
             $pdo->commit();
             unset(self::$balanceCache[$uid]);
             return true;
-        } catch (\PDOException $e) {
+        } catch (\Throwable $e) {
             try {
                 if (isset($pdo) && $pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
             } catch (\Throwable) {
             }
-            if ($e->getCode() === '23000') {
-                return false; // already awarded
+            if ($e instanceof \PDOException && $e->getCode() === '23000') {
+                return false; // already awarded: lost a duplicate-key race
             }
             error_log('forum-shop award failed: ' . $e->getMessage());
-            return false;
-        } catch (\Throwable $t) {
-            try {
-                if (isset($pdo) && $pdo->inTransaction()) {
-                    $pdo->rollBack();
-                }
-            } catch (\Throwable) {
-            }
-            error_log('forum-shop award failed: ' . $t->getMessage());
             return false;
         }
     }
@@ -406,28 +416,72 @@ class Shop
     /** @return array{badges:array<int,string>,title:?string,glow:?string} */
     public static function flairFor(int $uid): array
     {
-        $out = ['badges' => [], 'title' => null, 'glow' => null];
         if ($uid <= 0) {
-            return $out;
+            return ['badges' => [], 'title' => null, 'glow' => null];
         }
-        if (isset(self::$flairCache[$uid])) {
-            return self::$flairCache[$uid];
+        $m = self::flairForMany([$uid]);
+        return $m[$uid] ?? ['badges' => [], 'title' => null, 'glow' => null];
+    }
+
+    /**
+     * Equipped flair for many users in one query. Nothing on a page knows
+     * the full user list up front (core renders row by row), so per-user
+     * cached lookups remain the norm; this keeps one code path for both.
+     * @param array<int> $uids
+     * @return array<int,array{badges:array<int,string>,title:?string,glow:?string}>
+     */
+    public static function flairForMany(array $uids): array
+    {
+        $out = [];
+        $missing = [];
+        foreach ($uids as $u) {
+            $u = (int) $u;
+            if ($u <= 0) {
+                continue;
+            }
+            if (isset(self::$flairCache[$u])) {
+                $out[$u] = self::$flairCache[$u];
+            } else {
+                $missing[$u] = true;
+            }
         }
-        try {
-            $st = Db::pdo()->prepare('SELECT i.kind, i.name, i.payload FROM shop_inventory v JOIN shop_items i ON i.id = v.item_id WHERE v.user_id = ? AND v.equipped = 1');
-            $st->execute([$uid]);
-            foreach ($st->fetchAll() as $r) {
-                if ($r['kind'] === 'badge') {
-                    $out['badges'][] = (string) $r['name'];
-                } elseif ($r['kind'] === 'title' && $out['title'] === null) {
-                    $out['title'] = (string) $r['name'];
-                } elseif ($r['kind'] === 'glow' && $out['glow'] === null && preg_match('/^#[0-9a-f]{6}$/i', (string) $r['payload'])) {
-                    $out['glow'] = (string) $r['payload'];
+        $missing = array_keys($missing);
+        if ($missing !== []) {
+            try {
+                $ph = implode(',', array_fill(0, count($missing), '?'));
+                $st = Db::pdo()->prepare("SELECT v.user_id, i.kind, i.name, i.payload FROM shop_inventory v JOIN shop_items i ON i.id = v.item_id WHERE v.user_id IN ($ph) AND v.equipped = 1");
+                $st->execute($missing);
+                $rows = [];
+                foreach ($st->fetchAll() as $r) {
+                    $rows[(int) $r['user_id']][] = $r;
+                }
+                foreach ($missing as $u) {
+                    self::$flairCache[$u] = self::buildFlair($rows[$u] ?? []);
+                    $out[$u] = self::$flairCache[$u];
+                }
+            } catch (\Throwable) {
+                foreach ($missing as $u) {
+                    $out[$u] = self::$flairCache[$u] = ['badges' => [], 'title' => null, 'glow' => null];
                 }
             }
-        } catch (\Throwable) {
         }
-        return self::$flairCache[$uid] = $out;
+        return $out;
+    }
+
+    /** @param array<int,array> $rows */
+    private static function buildFlair(array $rows): array
+    {
+        $out = ['badges' => [], 'title' => null, 'glow' => null];
+        foreach ($rows as $r) {
+            if ($r['kind'] === 'badge') {
+                $out['badges'][] = (string) $r['name'];
+            } elseif ($r['kind'] === 'title' && $out['title'] === null) {
+                $out['title'] = (string) $r['name'];
+            } elseif ($r['kind'] === 'glow' && $out['glow'] === null && preg_match('/^#[0-9a-f]{6}$/i', (string) $r['payload'])) {
+                $out['glow'] = (string) $r['payload'];
+            }
+        }
+        return $out;
     }
 
     /**
@@ -479,11 +533,14 @@ class Shop
             }
             $pdo->beginTransaction();
             // Atomic deduct: exactly one concurrent buyer can win the funds.
-            $st = $pdo->prepare('UPDATE shop_wallet SET balance = balance - ? WHERE user_id = ? AND balance >= ?');
-            $st->execute([$price, $uid, $price]);
-            if ($st->rowCount() === 0) {
-                $pdo->rollBack();
-                return ['ok' => false, 'error' => 'Not enough Credits.'];
+            // Free items skip the wallet entirely (new members have no row yet).
+            if ($price > 0) {
+                $st = $pdo->prepare('UPDATE shop_wallet SET balance = balance - ? WHERE user_id = ? AND balance >= ?');
+                $st->execute([$price, $uid, $price]);
+                if ($st->rowCount() === 0) {
+                    $pdo->rollBack();
+                    return ['ok' => false, 'error' => 'Not enough ' . self::currency() . '.'];
+                }
             }
             try {
                 $pdo->prepare('INSERT INTO shop_inventory (user_id, item_id, equipped) VALUES (?,?,0)')->execute([$uid, $itemId]);
@@ -507,7 +564,7 @@ class Shop
         }
     }
 
-    /** @return array{ok:bool,error?:string} */
+    /** @return array{ok:bool,error?:string,message?:string} */
     public static function equip(int $uid, int $itemId): array
     {
         if ($uid <= 0) {
@@ -532,7 +589,7 @@ class Shop
             }
             $pdo->commit();
             unset(self::$flairCache[$uid]);
-            return ['ok' => true, 'error' => $msg];
+            return ['ok' => true, 'message' => $msg];
         } catch (\Throwable $t) {
             error_log('forum-shop equip failed: ' . $t->getMessage());
             return ['ok' => false, 'error' => 'Could not change flair.'];
@@ -800,7 +857,7 @@ class Shop
             return;
         }
         $r = self::equip((int) $me['id'], (int) ($_POST['item_id'] ?? 0));
-        self::flash((string) ($r['error'] ?? 'Done.'), $r['ok']);
+        self::flash((string) ($r['message'] ?? $r['error'] ?? 'Done.'), $r['ok']);
         redirect(url('/shop'));
     }
 

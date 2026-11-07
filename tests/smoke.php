@@ -120,8 +120,11 @@ namespace {
     $pdo->exec("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username VARCHAR(50), user_group VARCHAR(20) DEFAULT 'member')");
     $pdo->exec('CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, topic_id INT, user_id INT, body_bbcode TEXT)');
     $pdo->exec('CREATE TABLE settings (`key` VARCHAR(100) PRIMARY KEY, `value` TEXT NOT NULL)');
-    $sql = file_get_contents(dirname(__DIR__) . '/migrations/001_shop.sql');
-    $sql = str_replace('INT AUTO_INCREMENT PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT', $sql);
+    $sql = '';
+    foreach (glob(dirname(__DIR__) . '/migrations/*.sql') ?: [] as $f) {
+        // MySQL AUTO_INCREMENT has no SQLite equivalent; translate it.
+        $sql .= str_replace('INT AUTO_INCREMENT PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT', (string) file_get_contents($f)) . "\n";
+    }
     $pdo->exec($sql);
     $pdo->exec("INSERT INTO users (username, user_group) VALUES ('alice','member'),('bob','member'),('root','admin'),('carol','member')");
     $pdo->exec("INSERT INTO posts (topic_id, user_id, body_bbcode) VALUES (1,1,'hello')");
@@ -142,6 +145,9 @@ namespace {
     check('starts unseeded', count(Shop::allItems()) === 0);
     Hooks::do_action('plugin_enabled', basename(dirname(__DIR__)));
     check('seeded on enable', count(Shop::allItems()) === 8);
+    Shop::seed();
+    Shop::seed();
+    check('seed is idempotent', count(Shop::allItems()) === 8 && (int) $pdo->query("SELECT COUNT(*) FROM shop_items WHERE name='Gold Star'")->fetchColumn() === 1);
 
     // --- earn: topic ---
     Hooks::do_action('topic_created', 1);
@@ -209,6 +215,14 @@ namespace {
     $pdo->prepare('INSERT INTO shop_items (kind,name,price,payload) VALUES (?,?,?,?)')->execute(['badge', 'Pricey', 999999, '']);
     $pid = (int) $pdo->lastInsertId();
     check('insufficient funds', !Shop::buy(2, $pid)['ok'] && Shop::balance(2) === 5);
+    $GLOBALS['psettings'][$plug . '.currency'] = 'Coins';
+    check('buy error uses currency name', (Shop::buy(2, $pid)['error'] ?? '') === 'Not enough Coins.');
+    $GLOBALS['psettings'] = [];
+    $pdo->exec("INSERT INTO users (username, user_group) VALUES ('dave','member')");
+    $dave = (int) $pdo->lastInsertId();
+    Shop::addItem('Freebie', 'badge', 0, '');
+    $freeId = (int) $pdo->query("SELECT id FROM shop_items WHERE name='Freebie'")->fetchColumn();
+    check('free item needs no wallet row', Shop::buy($dave, $freeId)['ok'] && Shop::balance($dave) === 0 && isset(Shop::ownedMap($dave)[$freeId]));
 
     // --- equip: one per kind, server-side flair ---
     $b1 = (int) $cheap['id'];
@@ -222,7 +236,11 @@ namespace {
     Shop::equip(1, $b2);
     check('equip toggles off', Shop::flairFor(1)['badges'] === []);
 
-    Shop::equip(1, $b1);
+    $eq = Shop::equip(1, $b1);
+    check('equip success uses message key', ($eq['message'] ?? '') === 'Equipped.' && !isset($eq['error']));
+    $batch = Shop::flairForMany([1, 2, 4]);
+    check('batch flair loads many users', ($batch[1]['badges'] ?? []) === ['Gold Star'] && ($batch[2]['badges'] ?? []) === []);
+
     $html = Shop::usernameFlair('<a href="/members/alice.u1">alice</a>', ['user_id' => 1]);
     check('username filter adds star, keeps name', str_contains($html, 'shop-badge') && str_contains($html, '>alice</a>'));
     $html = Shop::usernameFlair('<a href="/members/alice.u1">alice</a>', ['id' => 1, 'username' => 'alice']);
