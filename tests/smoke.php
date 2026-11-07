@@ -363,6 +363,13 @@ namespace {
     } catch (TestRedirect) {
     }
     check('rates persist to settings', $pdo->query("SELECT `value` FROM settings WHERE `key`='forum-shop.earn_topic'")->fetchColumn() === '11');
+    $_POST = ['csrf' => 't', 'shop_action' => 'save_forum_rates', 'rate_topic' => [5 => 12], 'rate_reply' => [5 => 7]];
+    try {
+        Shop::adminSubmit();
+        check('forum rates submit redirects', false);
+    } catch (TestRedirect $e) {
+        check('forum rates submit saves', $e->to === '/shop/admin' && $pdo->query("SELECT `value` FROM settings WHERE `key`='forum-shop.forum_5_topic'")->fetchColumn() === '12' && $pdo->query("SELECT `value` FROM settings WHERE `key`='forum-shop.forum_5_reply'")->fetchColumn() === '7');
+    }
 
     // --- delete ---
     check('delete missing fails', !Shop::deleteItem(999999)['ok']);

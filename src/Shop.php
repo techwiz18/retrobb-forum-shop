@@ -854,13 +854,9 @@ class Shop
         } elseif ($action === 'delete_item') {
             $r = self::deleteItem((int) ($_POST['item_id'] ?? 0));
         } elseif ($action === 'save_rates') {
-            $r = self::saveRates((int) ($_POST['earn_topic'] ?? 0), (int) ($_POST['earn_reply'] ?? 0), (int) ($_POST['earn_daily'] ?? 0), (string) ($_POST['currency'] ?? ''));
-            if ($r['ok']) {
-                $fr = self::saveForumRates((array) ($_POST['rate_topic'] ?? []), (array) ($_POST['rate_reply'] ?? []));
-                if (!$fr['ok']) {
-                    $r = $fr;
-                }
-            }
+            $r = self::saveRates((int) ($_POST['earn_topic'] ?? -1), (int) ($_POST['earn_reply'] ?? -1), (int) ($_POST['earn_daily'] ?? -1), (string) ($_POST['currency'] ?? ''));
+        } elseif ($action === 'save_forum_rates') {
+            $r = self::saveForumRates((array) ($_POST['rate_topic'] ?? []), (array) ($_POST['rate_reply'] ?? []));
         } else {
             $r = ['ok' => false, 'error' => 'Unknown action.'];
         }

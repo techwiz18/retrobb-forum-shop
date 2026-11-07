@@ -32,9 +32,14 @@
   <div class="frow"><label for="shop-in-reply">Per reply</label><input id="shop-in-reply" name="earn_reply" inputmode="numeric" size="6" value="<?= (int) $rates['reply'] ?>" required></div>
   <div class="frow"><label for="shop-in-daily">Daily bonus</label><input id="shop-in-daily" name="earn_daily" inputmode="numeric" size="6" value="<?= (int) $rates['daily'] ?>" required></div>
   <div class="frow"><label for="shop-in-cur">Currency name</label><input id="shop-in-cur" name="currency" maxlength="20" size="12" value="<?= e($currency) ?>" required></div>
+  <button class="btn" type="submit">Save</button>
+</form>
 <div class="maintitle" id="shop-forums">Per-forum rates</div>
 <p class="muted">Overrides for individual forums: values equal to the global rate are not stored. Leave at global values unless a forum should pay differently.</p>
 <?php if ($forums): ?>
+<form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
+  <?= \RetroBB\Core\Csrf::field() ?>
+  <input type="hidden" name="shop_action" value="save_forum_rates">
 <table class="shop-table">
 <thead><tr><th>Forum</th><th class="num">Per topic</th><th class="num">Per reply</th></tr></thead>
 <tbody>
@@ -44,8 +49,10 @@
 </tbody>
 </table>
 <?php else: ?><div class="empty">No forums found.</div><?php endif; ?>
+<?php if ($forums): ?>
   <button class="btn" type="submit">Save</button>
 </form>
+<?php endif; ?>
 <div class="maintitle" id="shop-items">Items (<?= count($items) ?>)</div>
 <?php if ($items): ?>
 <table class="shop-table">
