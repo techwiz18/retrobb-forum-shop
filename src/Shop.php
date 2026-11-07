@@ -544,8 +544,10 @@ class Shop
             }
             try {
                 $pdo->prepare('INSERT INTO shop_inventory (user_id, item_id, equipped) VALUES (?,?,0)')->execute([$uid, $itemId]);
-                $pdo->prepare("INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,'purchase',NULL,?)")
-                    ->execute([$uid, -$price, date('Y-m-d H:i:s')]);
+                if ($price > 0) {
+                    $pdo->prepare("INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,'purchase',NULL,?)")
+                        ->execute([$uid, -$price, date('Y-m-d H:i:s')]);
+                }
             } catch (\PDOException $e) {
                 if ($e->getCode() !== '23000') {
                     throw $e;

@@ -184,7 +184,7 @@ namespace {
     $GLOBALS['psettings'] = [];
     check('currency falls back', Shop::currency() === 'Credits');
     check('saveRates stores currency', Shop::saveRates(11, 6, 3, 'Coins')['ok'] && $pdo->query("SELECT `value` FROM settings WHERE `key`='" . $plug . ".currency'")->fetchColumn() === 'Coins');
-    check('saveRates clears currency', Shop::saveRates(10, 5, 2, '')['ok'] && Shop::currency() === 'Credits');
+    check('saveRates clears currency', Shop::saveRates(10, 5, 2, '')['ok'] && Shop::currency() === 'Credits' && (int) $pdo->query("SELECT COUNT(*) FROM settings WHERE `key`='" . $plug . ".currency'")->fetchColumn() === 0);
     check('currency too long rejected', !Shop::saveRates(10, 5, 2, str_repeat('x', 21))['ok']);
 
     // --- per-forum rates (isolated user carol, forum 7) ---
@@ -398,6 +398,19 @@ namespace {
     check('delete strips owners', Shop::deleteItem($delId)['ok'] && !isset(Shop::ownedMap(2)[$delId]));
     check('deleted item unbuyable', Shop::buy(2, $delId)['error'] === 'No such item.');
     check('bad glow rejected', !Shop::addItem('X', 'glow', 5, 'red')['ok']);
+
+    // --- 002 self-heal: duplicate seed rows collapse to one ---
+    $pdo->exec('DROP INDEX uniq_shop_items_kind_name');
+    $pdo->exec("INSERT INTO shop_items (kind,name,price,payload) VALUES ('badge','Gold Star',50,'')");
+    check('double-seed forced', (int) $pdo->query("SELECT COUNT(*) FROM shop_items WHERE kind='badge' AND name='Gold Star'")->fetchColumn() === 2);
+    $stmts = explode(';', (string) file_get_contents(dirname(__DIR__) . '/migrations/002_shop.sql'));
+    foreach ($stmts as $s) {
+        if (stripos($s, 'DELETE') !== false && trim($s) !== '') {
+            $pdo->exec($s);
+        }
+    }
+    check('migration heals double-seed', (int) $pdo->query("SELECT COUNT(*) FROM shop_items WHERE kind='badge' AND name='Gold Star'")->fetchColumn() === 1);
+    $pdo->exec('CREATE UNIQUE INDEX uniq_shop_items_kind_name ON shop_items (kind, name)');
 
     // --- uninstall: must come last (drops tables) ---
     $countTables = fn() => (int) $pdo->query("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('shop_wallet','shop_items','shop_inventory','shop_ledger')")->fetchColumn();
