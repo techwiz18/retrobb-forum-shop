@@ -650,6 +650,19 @@ class Shop
     }
 
     /** @return array<int,array> */
+    public static function memberOptions(int $limit = 200): array
+    {
+        try {
+            $st = Db::pdo()->prepare('SELECT username FROM users ORDER BY username ASC LIMIT ?');
+            $st->bindValue(1, max(1, min(500, $limit)), PDO::PARAM_INT);
+            $st->execute();
+            return $st->fetchAll();
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    /** @return array<int,array> */
     public static function ledgerFor(int $uid, int $limit = 25): array
     {
         try {
@@ -779,6 +792,7 @@ class Shop
             'rates' => self::rates(),
             'currency' => self::currency(),
             'to' => substr(trim((string) ($_GET['to'] ?? '')), 0, 50),
+            'members' => self::memberOptions(),
         ], 'Wallet');
     }
 
@@ -812,6 +826,7 @@ class Shop
             'rates' => self::rates(),
             'currency' => self::currency(),
             'forums' => self::forumList(),
+            'members' => self::memberOptions(),
         ], 'Shop admin');
     }
 

@@ -293,6 +293,7 @@ namespace {
     $html = (string) ob_get_clean();
     unset($_GET['to']);
     check('wallet prefills gift recipient + headings', str_contains($html, 'Send a gift') && str_contains($html, 'Recent transactions') && str_contains($html, 'value="bob"'));
+    check('member options for autocomplete', in_array('alice', array_column(Shop::memberOptions(), 'username')) && str_contains($html, '<datalist'));
     Auth::$user = ['id' => 2, 'username' => 'bob', 'user_group' => 'member'];
     ob_start();
     Shop::adminPage();

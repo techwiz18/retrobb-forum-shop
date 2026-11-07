@@ -1,4 +1,4 @@
-<?php /** @var array<int,array> $items */ /** @var array<int,array> $ledger */ /** @var array{topic:int,reply:int,daily:int} $rates */ /** @var string $currency */ /** @var array<int,array{id:int,category:string,name:string}> $forums */ ?>
+<?php /** @var array<int,array> $items */ /** @var array<int,array> $ledger */ /** @var array{topic:int,reply:int,daily:int} $rates */ /** @var string $currency */ /** @var array<int,array{id:int,category:string,name:string}> $forums */ /** @var array<int,array> $members */ ?>
 <div class="breadcrumb"><a href="<?= e(url('/')) ?>">Index</a> &raquo; <a href="<?= e(url('/admin')) ?>">AdminCP</a> &raquo; Shop</div>
 <div class="maintitle">AdminCP — Shop</div>
 <?php \RetroBB\Core\View::partial('admin/_nav', ['active' => '']); ?>
@@ -18,7 +18,8 @@
 <form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
   <?= \RetroBB\Core\Csrf::field() ?>
   <input type="hidden" name="shop_action" value="grant">
-  <div class="frow"><label for="shop-in-user">User</label><input id="shop-in-user" name="username" size="20" required></div>
+  <div class="frow"><label for="shop-in-user">User</label><input id="shop-in-user" name="username" size="20" list="shop-userlist" autocomplete="off" required></div>
+  <datalist id="shop-userlist"><?php foreach ($members as $m): ?><option value="<?= e($m['username']) ?>"></option><?php endforeach; ?></datalist>
   <div class="frow"><label for="shop-in-dir">Action</label><select id="shop-in-dir" name="direction"><option value="give">Give</option><option value="deduct">Deduct</option></select></div>
   <div class="frow"><label for="shop-in-amount">Amount</label><input id="shop-in-amount" name="amount" inputmode="numeric" size="8" required></div>
   <button class="btn" type="submit">Apply</button>
