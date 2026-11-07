@@ -73,22 +73,90 @@ class Shop
         }
     }
 
+    private static function delSetting(string $key): void
+    {
+        try {
+            Db::pdo()->prepare('DELETE FROM settings WHERE `key` = ?')->execute(['forum-shop.' . $key]);
+        } catch (\Throwable $t) {
+            error_log('forum-shop delSetting failed: ' . $t->getMessage());
+        }
+    }
+
+    public static function currency(): string
+    {
+        $v = function_exists('plugin_setting') ? trim(plugin_setting('forum-shop', 'currency', '')) : '';
+        if ($v === '' || mb_strlen($v) > 20) {
+            return 'Credits';
+        }
+        return $v;
+    }
+
     /** @return array{ok:bool,error?:string} */
-    public static function saveRates(int $topic, int $reply, int $daily): array
+    public static function saveRates(int $topic, int $reply, int $daily, string $currency): array
     {
         foreach (['topic' => $topic, 'reply' => $reply, 'daily' => $daily] as $k => $v) {
             if ($v < 0 || $v > 1000) {
                 return ['ok' => false, 'error' => 'Rates must be 0–1000.'];
             }
         }
+        $currency = trim($currency);
+        if (mb_strlen($currency) > 20) {
+            return ['ok' => false, 'error' => 'Currency name must be 1–20 characters.'];
+        }
         try {
             self::setSetting('earn_topic', (string) $topic);
             self::setSetting('earn_reply', (string) $reply);
             self::setSetting('earn_daily', (string) $daily);
+            if ($currency === '' || $currency === 'Credits') {
+                self::delSetting('currency');
+            } else {
+                self::setSetting('currency', $currency);
+            }
             return ['ok' => true];
         } catch (\Throwable $t) {
             error_log('forum-shop saveRates failed: ' . $t->getMessage());
             return ['ok' => false, 'error' => 'Could not save rates.'];
+        }
+    }
+
+    /** Per-forum topic/reply override; falls back to the global rate. */
+    public static function forumRate(int $fid, string $kind): int
+    {
+        if ($fid > 0 && in_array($kind, ['topic', 'reply'], true)) {
+            $v = function_exists('plugin_setting') ? plugin_setting('forum-shop', "forum_{$fid}_{$kind}", '') : '';
+            if ($v !== '' && (int) $v >= 0) {
+                return max(0, min(1000, (int) $v));
+            }
+        }
+        $r = self::rates();
+        return $r[$kind] ?? 0;
+    }
+
+    /** @param array<mixed> $topics @param array<mixed> $replies @return array{ok:bool,error?:string} */
+    public static function saveForumRates(array $topics, array $replies): array
+    {
+        try {
+            foreach (['topic' => $topics, 'reply' => $replies] as $kind => $rows) {
+                foreach ($rows as $fid => $v) {
+                    $fid = (int) $fid;
+                    if ($fid <= 0) {
+                        continue;
+                    }
+                    $v = (int) $v;
+                    if ($v < 0 || $v > 1000) {
+                        return ['ok' => false, 'error' => 'Forum rates must be 0–1000.'];
+                    }
+                    if ($v === self::rates()[$kind]) {
+                        self::delSetting("forum_{$fid}_{$kind}");
+                    } else {
+                        self::setSetting("forum_{$fid}_{$kind}", (string) $v);
+                    }
+                }
+            }
+            return ['ok' => true];
+        } catch (\Throwable $t) {
+            error_log('forum-shop saveForumRates failed: ' . $t->getMessage());
+            return ['ok' => false, 'error' => 'Could not save forum rates.'];
         }
     }
 
@@ -158,7 +226,8 @@ class Shop
             if (!$row || (int) $row['user_id'] <= 0) {
                 return;
             }
-            self::award((int) $row['user_id'], self::rates()['topic'], 'new_topic', (int) $row['id'], null);
+            $forumId = (int) (\RetroBB\Models\Topic::find($tid)['forum_id'] ?? 0);
+            self::award((int) $row['user_id'], self::forumRate($forumId, 'topic'), 'new_topic', (int) $row['id'], null);
         } catch (\Throwable $t) {
             error_log('forum-shop topic earn failed: ' . $t->getMessage());
         }
@@ -167,9 +236,10 @@ class Shop
     public static function onPostCreated(int $topicId, ?int $postId = null, ?int $userId = null): void
     {
         try {
+            $rate = self::forumRate((int) (\RetroBB\Models\Topic::find($topicId)['forum_id'] ?? 0), 'reply');
             if ($postId !== null && $userId !== null) {
                 if ($userId > 0) {
-                    self::award($userId, self::rates()['reply'], 'reply', $postId, null);
+                    self::award($userId, $rate, 'reply', $postId, null);
                 }
                 return;
             }
@@ -182,7 +252,7 @@ class Shop
             if (!$row || (int) $row['user_id'] <= 0) {
                 return;
             }
-            self::award((int) $row['user_id'], self::rates()['reply'], 'reply', (int) $row['id'], null);
+            self::award((int) $row['user_id'], $rate, 'reply', (int) $row['id'], null);
         } catch (\Throwable $t) {
             error_log('forum-shop reply earn failed: ' . $t->getMessage());
         }
@@ -539,6 +609,45 @@ class Shop
         }
     }
 
+    /** @return array{ok:bool,error?:string} */
+    public static function gift(int $fromUid, string $toUsername, int $amount): array
+    {
+        if ($fromUid <= 0) {
+            return ['ok' => false, 'error' => 'Log in to send gifts.'];
+        }
+        if ($amount < 1 || $amount > 100000) {
+            return ['ok' => false, 'error' => 'Gift must be 1–100000.'];
+        }
+        try {
+            $to = \RetroBB\Models\User::findByUsername(trim($toUsername));
+            if (!$to || (int) $to['id'] <= 0) {
+                return ['ok' => false, 'error' => 'No such user.'];
+            }
+            $toUid = (int) $to['id'];
+            if ($toUid === $fromUid) {
+                return ['ok' => false, 'error' => 'You cannot gift yourself.'];
+            }
+            $pdo = Db::pdo();
+            $pdo->beginTransaction();
+            $st = $pdo->prepare('UPDATE shop_wallet SET balance = balance - ? WHERE user_id = ? AND balance >= ?');
+            $st->execute([$amount, $fromUid, $amount]);
+            if ($st->rowCount() === 0) {
+                $pdo->rollBack();
+                return ['ok' => false, 'error' => 'Not enough ' . self::currency() . '.'];
+            }
+            self::addBalance($pdo, $toUid, $amount);
+            $now = date('Y-m-d H:i:s');
+            $pdo->prepare('INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,\'gift_sent\',NULL,?)')->execute([$fromUid, -$amount, $now]);
+            $pdo->prepare('INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,\'gift_received\',NULL,?)')->execute([$toUid, $amount, $now]);
+            $pdo->commit();
+            unset(self::$balanceCache[$fromUid], self::$balanceCache[$toUid]);
+            return ['ok' => true];
+        } catch (\Throwable $t) {
+            error_log('forum-shop gift failed: ' . $t->getMessage());
+            return ['ok' => false, 'error' => 'Gift failed.'];
+        }
+    }
+
     /** @return array<int,array> */
     public static function ledgerFor(int $uid, int $limit = 25): array
     {
@@ -605,6 +714,7 @@ class Shop
         $r->post('#^/shop/buy$#', function () { Shop::buySubmit(); });
         $r->post('#^/shop/equip$#', function () { Shop::equipSubmit(); });
         $r->get('#^/wallet$#', function () { Shop::walletPage(); });
+        $r->post('#^/wallet/gift$#', function () { Shop::giftSubmit(); });
         $r->get('#^/shop/admin$#', function () { Shop::adminPage(); });
         $r->post('#^/shop/admin$#', function () { Shop::adminSubmit(); });
     }
@@ -619,6 +729,7 @@ class Shop
             'owned' => $uid > 0 ? self::ownedMap($uid) : [],
             'balance' => $uid > 0 ? self::balance($uid) : 0,
             'rates' => self::rates(),
+            'currency' => self::currency(),
         ], 'Shop');
     }
 
@@ -665,7 +776,24 @@ class Shop
             'balance' => self::balance($uid),
             'ledger' => self::ledgerFor($uid),
             'rates' => self::rates(),
+            'currency' => self::currency(),
         ], 'Wallet');
+    }
+
+    public static function giftSubmit(): void
+    {
+        $me = Auth::user();
+        if (!$me) {
+            redirect('/login?next=' . urlencode('/wallet'));
+        }
+        if (!Csrf::verify($_POST['csrf'] ?? null)) {
+            http_response_code(419);
+            echo 'CSRF mismatch';
+            return;
+        }
+        $r = self::gift((int) $me['id'], (string) ($_POST['username'] ?? ''), (int) ($_POST['amount'] ?? 0));
+        self::flash($r['ok'] ? 'Gift sent.' : (string) ($r['error'] ?? 'Failed.'), $r['ok']);
+        redirect(url('/wallet'));
     }
 
     public static function adminPage(): void
@@ -680,6 +808,8 @@ class Shop
             'items' => self::allItems(),
             'ledger' => self::recentLedger(),
             'rates' => self::rates(),
+            'currency' => self::currency(),
+            'forums' => self::forumList(),
         ], 'Shop admin');
     }
 
@@ -707,12 +837,33 @@ class Shop
         } elseif ($action === 'delete_item') {
             $r = self::deleteItem((int) ($_POST['item_id'] ?? 0));
         } elseif ($action === 'save_rates') {
-            $r = self::saveRates((int) ($_POST['earn_topic'] ?? 0), (int) ($_POST['earn_reply'] ?? 0), (int) ($_POST['earn_daily'] ?? 0));
+            $r = self::saveRates((int) ($_POST['earn_topic'] ?? 0), (int) ($_POST['earn_reply'] ?? 0), (int) ($_POST['earn_daily'] ?? 0), (string) ($_POST['currency'] ?? ''));
+            if ($r['ok']) {
+                $fr = self::saveForumRates((array) ($_POST['rate_topic'] ?? []), (array) ($_POST['rate_reply'] ?? []));
+                if (!$fr['ok']) {
+                    $r = $fr;
+                }
+            }
         } else {
             $r = ['ok' => false, 'error' => 'Unknown action.'];
         }
         self::flash($r['ok'] ? 'Saved.' : (string) ($r['error'] ?? 'Failed.'), $r['ok']);
         redirect(url('/shop/admin'));
+    }
+
+    /** @return array<int,array{id:int,category:string,name:string}> */
+    public static function forumList(): array
+    {
+        $out = [];
+        try {
+            foreach (\RetroBB\Models\Board::index() as $c) {
+                foreach ($c['forums'] ?? [] as $f) {
+                    $out[] = ['id' => (int) $f['id'], 'category' => (string) ($c['title'] ?? ''), 'name' => (string) $f['name']];
+                }
+            }
+        } catch (\Throwable) {
+        }
+        return $out;
     }
 
     /** @param array<string,mixed> $vars */

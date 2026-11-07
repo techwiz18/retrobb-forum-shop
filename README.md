@@ -7,10 +7,14 @@ AdminCP → Plugins. No core changes required.
 ## What it does
 
 - **Earn Credits**: +10 per new topic, +5 per reply, +2 daily login bonus.
+  Rates are global by default, overridable per forum; the currency name is
+  renameable. All editable on `/shop/admin`.
 - **Spend** in `/shop`: badges, custom titles, username glows — woven into
-  each postbit (glow on the name, badge beside it, title under it) via a
-  footer script that decorates `.postbit[data-username]` in place.
-- **Wallet** at `/wallet`: balance + transaction history.
+  each postbit (glow on the name, badge beside it, title under it) via
+  server-side hooks. Flair follows names onto the memberlist, profiles, and
+  the board index.
+- **Wallet** at `/wallet`: balance + transaction history + sending gifts to
+  other members.
 - **Admin** at `/shop/admin` (admins only): add items, grant Credits, recent
   transactions.
 

@@ -1,9 +1,9 @@
-<?php /** @var array<int,array> $items */ /** @var array<int,array> $ledger */ /** @var array{topic:int,reply:int,daily:int} $rates */ ?>
+<?php /** @var array<int,array> $items */ /** @var array<int,array> $ledger */ /** @var array{topic:int,reply:int,daily:int} $rates */ /** @var string $currency */ /** @var array<int,array{id:int,category:string,name:string}> $forums */ ?>
 <div class="breadcrumb"><a href="<?= e(url('/')) ?>">Index</a> &raquo; <a href="<?= e(url('/admin')) ?>">AdminCP</a> &raquo; Shop</div>
 <div class="maintitle">AdminCP — Shop</div>
 <?php \RetroBB\Core\View::partial('admin/_nav', ['active' => '']); ?>
 <p class="muted">Flair items and Credit grants. Purchases and awards are journaled below.</p>
-<div class="shop-anchors"><a href="#shop-add">Add item</a> · <a href="#shop-grant">Manage Credits</a> · <a href="#shop-rates">Earn rates</a> · <a href="#shop-items">Items (<?= count($items) ?>)</a> · <a href="#shop-ledger">Transactions</a></div>
+<div class="shop-anchors"><a href="#shop-add">Add item</a> · <a href="#shop-grant">Manage <?= e($currency) ?></a> · <a href="#shop-rates">Earn rates</a> · <a href="#shop-forums">Per-forum rates</a> · <a href="#shop-items">Items (<?= count($items) ?>)</a> · <a href="#shop-ledger">Transactions</a></div>
 <div class="maintitle" id="shop-add">Add item</div>
 <form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
   <?= \RetroBB\Core\Csrf::field() ?>
@@ -14,7 +14,7 @@
   <div class="frow"><label for="shop-in-payload">Color (glow only)</label><input id="shop-in-payload" name="payload" placeholder="#c0392b" size="8" maxlength="7"></div>
   <button class="btn" type="submit">Add</button>
 </form>
-<div class="maintitle" id="shop-grant">Manage Credits</div>
+<div class="maintitle" id="shop-grant">Manage <?= e($currency) ?></div>
 <form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
   <?= \RetroBB\Core\Csrf::field() ?>
   <input type="hidden" name="shop_action" value="grant">
@@ -30,6 +30,19 @@
   <div class="frow"><label for="shop-in-topic">Per topic</label><input id="shop-in-topic" name="earn_topic" inputmode="numeric" size="6" value="<?= (int) $rates['topic'] ?>" required></div>
   <div class="frow"><label for="shop-in-reply">Per reply</label><input id="shop-in-reply" name="earn_reply" inputmode="numeric" size="6" value="<?= (int) $rates['reply'] ?>" required></div>
   <div class="frow"><label for="shop-in-daily">Daily bonus</label><input id="shop-in-daily" name="earn_daily" inputmode="numeric" size="6" value="<?= (int) $rates['daily'] ?>" required></div>
+  <div class="frow"><label for="shop-in-cur">Currency name</label><input id="shop-in-cur" name="currency" maxlength="20" size="12" value="<?= e($currency) ?>" required></div>
+<div class="maintitle" id="shop-forums">Per-forum rates</div>
+<p class="muted">Overrides for individual forums: values equal to the global rate are not stored. Leave at global values unless a forum should pay differently.</p>
+<?php if ($forums): ?>
+<table class="shop-table">
+<thead><tr><th>Forum</th><th class="num">Per topic</th><th class="num">Per reply</th></tr></thead>
+<tbody>
+<?php foreach ($forums as $f): ?>
+<tr><td><?= e($f['category']) ?> &raquo; <b><?= e($f['name']) ?></b></td><td class="num"><input name="rate_topic[<?= (int) $f['id'] ?>]" inputmode="numeric" size="6" value="<?= (int) \ForumShop\Shop::forumRate((int) $f['id'], 'topic') ?>"></td><td class="num"><input name="rate_reply[<?= (int) $f['id'] ?>]" inputmode="numeric" size="6" value="<?= (int) \ForumShop\Shop::forumRate((int) $f['id'], 'reply') ?>"></td></tr>
+<?php endforeach; ?>
+</tbody>
+</table>
+<?php else: ?><div class="empty">No forums found.</div><?php endif; ?>
   <button class="btn" type="submit">Save</button>
 </form>
 <div class="maintitle" id="shop-items">Items (<?= count($items) ?>)</div>

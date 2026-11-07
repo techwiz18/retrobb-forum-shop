@@ -68,6 +68,16 @@ namespace RetroBB\Models {
             return $r ?: null;
         }
     }
+    class Topic
+    {
+        /** @var array<int,array> */
+        public static array $topics = [];
+        public static function find(int $id): ?array { return self::$topics[$id] ?? null; }
+    }
+    class Board
+    {
+        public static function index(): array { return $GLOBALS['board_index'] ?? []; }
+    }
 }
 
 namespace {
@@ -113,8 +123,9 @@ namespace {
     $sql = file_get_contents(dirname(__DIR__) . '/migrations/001_shop.sql');
     $sql = str_replace('INT AUTO_INCREMENT PRIMARY KEY', 'INTEGER PRIMARY KEY AUTOINCREMENT', $sql);
     $pdo->exec($sql);
-    $pdo->exec("INSERT INTO users (username, user_group) VALUES ('alice','member'),('bob','member'),('root','admin')");
+    $pdo->exec("INSERT INTO users (username, user_group) VALUES ('alice','member'),('bob','member'),('root','admin'),('carol','member')");
     $pdo->exec("INSERT INTO posts (topic_id, user_id, body_bbcode) VALUES (1,1,'hello')");
+    \RetroBB\Models\Topic::$topics = [1 => ['id' => 1, 'forum_id' => 5]];
 
     require dirname(__DIR__) . '/bootstrap.php';
 
@@ -122,7 +133,7 @@ namespace {
     $fr = new FakeRouter();
     Hooks::do_action('routes', $fr);
     $patterns = array_map(fn($r) => $r[0] . ' ' . $r[1], $fr->routes);
-    check('shop+wallet+admin routes', in_array('GET #^/shop$#', $patterns) && in_array('GET #^/wallet$#', $patterns) && in_array('GET #^/shop/admin$#', $patterns) && in_array('POST #^/shop/buy$#', $patterns) && in_array('POST #^/shop/equip$#', $patterns) && in_array('POST #^/shop/admin$#', $patterns));
+    check('shop+wallet+admin routes', in_array('GET #^/shop$#', $patterns) && in_array('GET #^/wallet$#', $patterns) && in_array('POST #^/wallet/gift$#', $patterns) && in_array('GET #^/shop/admin$#', $patterns) && in_array('POST #^/shop/buy$#', $patterns) && in_array('POST #^/shop/equip$#', $patterns) && in_array('POST #^/shop/admin$#', $patterns));
     check('display hooks registered', isset(Hooks::$templates['nav_links'], Hooks::$templates['userbox'], Hooks::$templates['profile_after'], Hooks::$templates['postbit_user']) && isset(Hooks::$filters['post_username_html']));
     check('lifecycle hooks registered', isset(Hooks::$actions['plugin_enabled'], Hooks::$actions['plugin_disabled']));
 
@@ -157,10 +168,34 @@ namespace {
     Shop::maybeDaily();
     check('daily once per day', Shop::balance(1) === 17);
 
-    // --- configurable rates ---
+    // --- configurable rates + currency ---
     $GLOBALS['psettings'] = ['forum-shop.earn_topic' => '25'];
     check('rate override', Shop::rates()['topic'] === 25 && Shop::rates()['reply'] === 5);
     $GLOBALS['psettings'] = [];
+    $GLOBALS['psettings']['forum-shop.currency'] = 'Coins';
+    check('currency override', Shop::currency() === 'Coins');
+    $GLOBALS['psettings'] = [];
+    check('currency falls back', Shop::currency() === 'Credits');
+    check('saveRates stores currency', Shop::saveRates(11, 6, 3, 'Coins')['ok'] && $pdo->query("SELECT `value` FROM settings WHERE `key`='forum-shop.currency'")->fetchColumn() === 'Coins');
+    check('saveRates clears currency', Shop::saveRates(10, 5, 2, '')['ok'] && Shop::currency() === 'Credits');
+    check('currency too long rejected', !Shop::saveRates(10, 5, 2, str_repeat('x', 21))['ok']);
+
+    // --- per-forum rates (isolated user carol, forum 7) ---
+    $pdo->exec("INSERT INTO posts (topic_id, user_id, body_bbcode) VALUES (2,4,'carol here')");
+    \RetroBB\Models\Topic::$topics[2] = ['id' => 2, 'forum_id' => 7];
+    $GLOBALS['psettings'] = ['forum-shop.forum_7_topic' => '30'];
+    check('forum topic rate override', Shop::forumRate(7, 'topic') === 30 && Shop::forumRate(7, 'reply') === 5);
+    Hooks::do_action('topic_created', 2);
+    check('forum topic rate paid', Shop::balance(4) === 30);
+    $GLOBALS['psettings']['forum-shop.forum_7_reply'] = '9';
+    $pdo->exec("INSERT INTO posts (topic_id, user_id, body_bbcode) VALUES (2,4,'carol again')");
+    $carolReply = (int) $pdo->lastInsertId();
+    Hooks::do_action('post_created', 2, $carolReply, 4);
+    check('forum reply rate paid', Shop::balance(4) === 39);
+    $GLOBALS['psettings'] = [];
+    check('forum rates fall back', Shop::forumRate(7, 'topic') === 10);
+    check('saveForumRates stores override', Shop::saveForumRates([7 => 12], [])['ok']);
+    check('saveForumRates rejects junk', !Shop::saveForumRates([7 => 9999], [])['ok']);
 
     // --- buy ---
     $items = Shop::allItems();
@@ -288,6 +323,21 @@ namespace {
         check('deduct submit deducts', $e->to === '/shop/admin' && Shop::balance(2) === 40);
     }
     check('deduct overdraft refused', !Shop::grant('bob', -1000)['ok'] && Shop::balance(2) === 40);
+
+    // --- gifts: alice (64) -> bob (40) ---
+    check('gift moves funds both ways', Shop::gift(1, 'bob', 10)['ok'] && Shop::balance(1) === 54 && Shop::balance(2) === 50);
+    check('gift to self refused', !Shop::gift(1, 'alice', 1)['ok'] && Shop::balance(1) === 54);
+    check('gift overdraft refused', !Shop::gift(1, 'bob', 99999)['ok'] && Shop::balance(1) === 54);
+    check('gift to nobody refused', !Shop::gift(1, 'ghost', 1)['ok'] && Shop::balance(1) === 54);
+    $_POST = ['csrf' => 't', 'username' => 'carol', 'amount' => 4];
+    try {
+        Auth::$user = ['id' => 1, 'username' => 'alice', 'user_group' => 'member'];
+        Shop::giftSubmit();
+        check('gift submit redirects', false);
+    } catch (TestRedirect $e) {
+        check('gift submit sends gift', $e->to === '/wallet' && Shop::balance(1) === 50 && Shop::balance(4) === 43);
+    }
+    Auth::$user = ['id' => 3, 'username' => 'root', 'user_group' => 'admin'];
     $_POST = ['csrf' => 't', 'shop_action' => 'save_rates', 'earn_topic' => 11, 'earn_reply' => 6, 'earn_daily' => 3];
     try {
         Shop::adminSubmit();

@@ -1,8 +1,8 @@
-<?php /** @var array<int,array> $items */ /** @var array<int,int> $owned */ /** @var int $balance */ /** @var array{topic:int,reply:int,daily:int} $rates */
+<?php /** @var array<int,array> $items */ /** @var array<int,int> $owned */ /** @var int $balance */ /** @var array{topic:int,reply:int,daily:int} $rates */ /** @var string $currency */
 $me = \RetroBB\Core\Auth::user(); ?>
 <div class="breadcrumb"><a href="<?= e(url('/')) ?>">Index</a> &raquo; Shop</div>
-<div class="maintitle">Flair Shop<?php if ($me): ?> — <?= (int) $balance ?> Credits<?php endif; ?></div>
-<div class="subtitle"><?php if ($me): ?>Earn <?= (int) $rates['topic'] ?>/topic, <?= (int) $rates['reply'] ?>/reply, <?= (int) $rates['daily'] ?>/day.<?php else: ?><a href="<?= e(url('/login?next=' . urlencode('/shop'))) ?>">Log in</a> to buy flair. Posting earns Credits (<?= (int) $rates['topic'] ?>/topic, <?= (int) $rates['reply'] ?>/reply, <?= (int) $rates['daily'] ?>/day).<?php endif; ?></div>
+<div class="maintitle">Flair Shop<?php if ($me): ?> — <?= (int) $balance ?> <?= e($currency) ?><?php endif; ?></div>
+<div class="subtitle"><?php if ($me): ?>Earn <?= (int) $rates['topic'] ?>/topic, <?= (int) $rates['reply'] ?>/reply, <?= (int) $rates['daily'] ?>/day.<?php else: ?><a href="<?= e(url('/login?next=' . urlencode('/shop'))) ?>">Log in</a> to buy flair. Posting earns <?= e($currency) ?> (<?= (int) $rates['topic'] ?>/topic, <?= (int) $rates['reply'] ?>/reply, <?= (int) $rates['daily'] ?>/day).<?php endif; ?></div>
 <?php $byKind = [];
 foreach ($items as $it) { $byKind[$it['kind']][] = $it; } ?>
 <?php foreach (['badge' => 'Badges', 'title' => 'Titles', 'glow' => 'Glows'] as $kind => $label): ?>
@@ -13,7 +13,7 @@ foreach ($items as $it) { $byKind[$it['kind']][] = $it; } ?>
 <?php $id = (int) $it['id']; $has = isset($owned[$id]); $on = ($owned[$id] ?? 0) === 1; ?>
 <div class="shop-card">
   <b><?= e($it['name']) ?></b><?php if ($kind === 'glow'): ?> <span class="swatch" style="background:<?= e($it['payload']) ?>"></span><?php endif; ?><br>
-  <span class="price"><?= (int) $it['price'] ?> Credits<?php if ($on): ?> · equipped<?php endif; ?></span><br>
+  <span class="price"><?= (int) $it['price'] ?> <?= e($currency) ?><?php if ($on): ?> · equipped<?php endif; ?></span><br>
   <?php if (!$me): ?><span class="price">(log in to buy)</span>
   <?php elseif (!$has): ?>
     <form method="post" action="<?= e(url('/shop/buy')) ?>" style="margin-top:4px"><?= \RetroBB\Core\Csrf::field() ?><input type="hidden" name="item_id" value="<?= $id ?>"><button class="smallbtn" type="submit">Buy</button></form>
