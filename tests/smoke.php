@@ -322,6 +322,8 @@ namespace {
     } catch (TestRedirect $e) {
         check('deduct submit deducts', $e->to === '/shop/admin' && Shop::balance(2) === 40);
     }
+    $ledger2 = Shop::ledgerFor(2);
+    check('deduct logs deduct reason', ($ledger2[0]['reason'] ?? '') === 'deduct' && ($ledger2[1]['reason'] ?? '') === 'grant');
     check('deduct overdraft refused', !Shop::grant('bob', -1000)['ok'] && Shop::balance(2) === 40);
 
     // --- gifts: alice (64) -> bob (40) ---

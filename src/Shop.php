@@ -587,9 +587,10 @@ class Shop
                 return ['ok' => false, 'error' => 'No such user.'];
             }
             if ($amount < 0 && self::balance((int) $u['id']) < abs($amount)) {
-                return ['ok' => false, 'error' => 'That user only has ' . self::balance((int) $u['id']) . ' Credits.'];
+                return ['ok' => false, 'error' => 'That user only has ' . self::balance((int) $u['id']) . ' ' . self::currency() . '.'];
             }
-            return self::award((int) $u['id'], $amount, 'grant') ? ['ok' => true] : ['ok' => false, 'error' => 'Grant failed.'];
+            $reason = $amount > 0 ? 'grant' : 'deduct';
+            return self::award((int) $u['id'], $amount, $reason) ? ['ok' => true] : ['ok' => false, 'error' => 'Grant failed.'];
         } catch (\Throwable $t) {
             error_log('forum-shop grant failed: ' . $t->getMessage());
             return ['ok' => false, 'error' => 'Grant failed.'];
