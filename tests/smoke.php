@@ -143,17 +143,27 @@ namespace {
     Shop::buy(1, $b2);
     Shop::equip(1, $b1);
     Shop::equip(1, $b2);
-    $flair = Shop::flairFor(1);
-    check('equip replaces same kind', $flair['badges'] === ['Second']);
+    Router::$path = '/topic/welcome-to-test.t1';
+    Shop::resetCache();
+    $map = Shop::pageFlair();
+    check('equip replaces same kind', ($map['alice']['badges'] ?? []) === ['Second']);
     Shop::equip(1, $b2);
-    check('equip toggles off', Shop::flairFor(1)['badges'] === []);
+    Shop::resetCache();
+    check('equip toggles off', (Shop::pageFlair()['alice']['badges'] ?? []) === []);
 
-    // --- postbit partial renders equipped flair ---
+    // --- footer script decorates postbits in place ---
     Shop::equip(1, $b1);
+    Shop::resetCache();
+    Router::$path = '/topic/welcome-to-test.t1';
     ob_start();
-    Hooks::render_template_hook('postbit_after', ['post' => ['user_id' => 1]]);
+    Shop::footerFlair();
     $html = (string) ob_get_clean();
-    check('flair partial shows badge', str_contains($html, 'Gold Star'));
+    check('flair script carries badge data', str_contains($html, 'Gold Star') && str_contains($html, 'postbit[data-username]'));
+    Router::$path = '/members/alice.u1';
+    Shop::resetCache();
+    ob_start();
+    Shop::footerFlair();
+    check('no flair script off topic pages', (string) ob_get_clean() === '');
 
     // --- routes ---
     Router::$path = '/shop';

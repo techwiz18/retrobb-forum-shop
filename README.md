@@ -7,8 +7,9 @@ AdminCP → Plugins. No core changes required.
 ## What it does
 
 - **Earn Credits**: +10 per new topic, +5 per reply, +2 daily login bonus.
-- **Spend** in `/shop`: badges, custom titles, username glows — shown under
-  each postbit via the `postbit_after` template hook.
+- **Spend** in `/shop`: badges, custom titles, username glows — woven into
+  each postbit (glow on the name, badge beside it, title under it) via a
+  footer script that decorates `.postbit[data-username]` in place.
 - **Wallet** at `/wallet`: balance + transaction history.
 - **Admin** at `/shop/admin` (admins only): add items, grant Credits, recent
   transactions.
@@ -46,5 +47,6 @@ per-kind, route fall-through, admin gate, CSRF refusal, grant validation.
 
 1. `boot`+`exit` routing bypasses core canonical-host enforcement on `/shop*`.
 2. `post_created`/`topic_created` should pass post + author ids.
-3. No profile-page or nav-row hooks (balance chip uses the `header` action).
+3. No nav-row/userbox/profile hooks (filed: RetroBB #17).
+4. No server-side postbit hook — flair needs JS DOM injection (filed: RetroBB #18).
 4. No plugin install/migrate/settings API (tables self-create; no uninstall).

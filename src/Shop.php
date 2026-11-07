@@ -26,13 +26,13 @@ class Shop
 
     /** @var array<int,int> per-request balance cache */
     private static array $balanceCache = [];
-    /** @var array<int,array> per-request flair cache */
-    private static array $flairCache = [];
+    /** @var array<string,array>|null topic flair map for this request */
+    private static ?array $pageFlairCache = null;
 
     public static function resetCache(): void
     {
         self::$balanceCache = [];
-        self::$flairCache = [];
+        self::$pageFlairCache = null;
     }
 
     // ---------------- install ----------------
@@ -229,31 +229,53 @@ class Shop
         return $out;
     }
 
-    /** @return array{badges:array<int,string>,title:?string,glow:?string} */
-    public static function flairFor(int $uid): array
+    /**
+     * Equipped flair for every poster on the current topic page, keyed by
+     * username. One query per page; the footer script matches it to each
+     * `.postbit[data-username]` in the DOM.
+     * @return array<string,array{badges:array<int,string>,title:?string,glow:?string}>
+     */
+    public static function pageFlair(?string $path = null): array
     {
-        $out = ['badges' => [], 'title' => null, 'glow' => null];
-        if ($uid <= 0) {
-            return $out;
+        if (self::$pageFlairCache !== null) {
+            return self::$pageFlairCache;
         }
-        if (isset(self::$flairCache[$uid])) {
-            return self::$flairCache[$uid];
-        }
+        $out = [];
         try {
-            $st = Db::pdo()->prepare('SELECT i.kind, i.name, i.payload FROM shop_inventory v JOIN shop_items i ON i.id = v.item_id WHERE v.user_id = ? AND v.equipped = 1');
-            $st->execute([$uid]);
+            $path ??= self::baseStripped(Router::currentPath());
+            if (!preg_match('#\.t(\d+)(?:/page-\d+)?$#', $path, $m)) {
+                return self::$pageFlairCache = $out;
+            }
+            $st = Db::pdo()->prepare('SELECT DISTINCT u.username, i.kind, i.name, i.payload FROM posts p JOIN users u ON u.id = p.user_id JOIN shop_inventory v ON v.user_id = u.id AND v.equipped = 1 JOIN shop_items i ON i.id = v.item_id WHERE p.topic_id = ?');
+            $st->execute([(int) $m[1]]);
             foreach ($st->fetchAll() as $r) {
+                $u = (string) $r['username'];
+                $out[$u] ??= ['badges' => [], 'title' => null, 'glow' => null];
                 if ($r['kind'] === 'badge') {
-                    $out['badges'][] = (string) $r['name'];
-                } elseif ($r['kind'] === 'title' && $out['title'] === null) {
-                    $out['title'] = (string) $r['name'];
-                } elseif ($r['kind'] === 'glow' && $out['glow'] === null && preg_match('/^#[0-9a-f]{6}$/i', (string) $r['payload'])) {
-                    $out['glow'] = (string) $r['payload'];
+                    $out[$u]['badges'][] = (string) $r['name'];
+                } elseif ($r['kind'] === 'title' && $out[$u]['title'] === null) {
+                    $out[$u]['title'] = (string) $r['name'];
+                } elseif ($r['kind'] === 'glow' && $out[$u]['glow'] === null && preg_match('/^#[0-9a-f]{6}$/i', (string) $r['payload'])) {
+                    $out[$u]['glow'] = (string) $r['payload'];
                 }
             }
         } catch (\Throwable) {
         }
-        return self::$flairCache[$uid] = $out;
+        return self::$pageFlairCache = $out;
+    }
+
+    /** Decorate each postbit in place: glow on the name, badges beside it, title under it. */
+    public static function footerFlair(): void
+    {
+        $map = self::pageFlair();
+        if (!$map) {
+            return;
+        }
+        $json = json_encode($map, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+        if (!is_string($json) || $json === '') {
+            return;
+        }
+        echo '<script>(function(d){document.querySelectorAll(\'.postbit[data-username]\').forEach(function(pb){var f=d[pb.dataset.username];if(!f)return;var left=pb.querySelector(\'.postleft\');if(!left)return;var pu=left.querySelector(\'.postuser\');if(!pu)return;if(f.glow){var a=pu.querySelector(\'a\');if(a)a.style.color=f.glow;}(f.badges||[]).forEach(function(b){var s=document.createElement(\'span\');s.className=\'shop-badge\';s.textContent=\'\\u2605 \'+b;if(f.glow)s.style.color=f.glow;pu.appendChild(document.createTextNode(\' \'));pu.appendChild(s);});if(f.title){var t=document.createElement(\'div\');t.className=\'shop-title\';t.textContent=f.title;var g=left.querySelector(\'.group\');if(g)g.after(t);else pu.after(t);}});})(' . $json . ');</script>';
     }
 
     /** @return array{ok:bool,error?:string} */
@@ -298,7 +320,8 @@ class Shop
                 return ['ok' => false, 'error' => 'You already own this.'];
             }
             $pdo->commit();
-            unset(self::$balanceCache[$uid], self::$flairCache[$uid]);
+            unset(self::$balanceCache[$uid]);
+            self::$pageFlairCache = null;
             return ['ok' => true];
         } catch (\Throwable $t) {
             error_log('forum-shop buy failed: ' . $t->getMessage());
@@ -330,7 +353,7 @@ class Shop
                 $msg = 'Equipped.';
             }
             $pdo->commit();
-            unset(self::$flairCache[$uid]);
+            self::$pageFlairCache = null;
             return ['ok' => true, 'error' => $msg];
         } catch (\Throwable $t) {
             error_log('forum-shop equip failed: ' . $t->getMessage());
@@ -422,9 +445,8 @@ class Shop
         echo '<style>' .
             '.shopbar{text-align:center;font-size:12px;padding:4px 8px;background:var(--bar-bg);border-bottom:1px solid var(--border);color:var(--text)}' .
             '.shopbar a{color:var(--link)}' .
-            '.shop-flair{margin:6px 0 0;font-size:11px;color:var(--muted)}' .
-            '.shop-badge{font-weight:bold;margin-right:8px}' .
-            '.shop-title{font-style:italic}' .
+            '.shop-badge{font-size:11px;font-weight:bold}' .
+            '.shop-title{font-size:11px;font-style:italic;color:var(--muted)}' .
             '.shop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin-top:8px}' .
             '.shop-card{border:1px solid var(--border);background:var(--row);padding:8px 10px}' .
             '.shop-card .price{color:var(--muted);font-size:11px}' .
@@ -449,11 +471,7 @@ class Shop
 
     public static function route(): void
     {
-        $path = Router::currentPath();
-        $bp = base_path();
-        if ($bp !== '' && ($path === $bp || str_starts_with($path, $bp . '/'))) {
-            $path = substr($path, strlen($bp)) ?: '/';
-        }
+        $path = self::baseStripped(Router::currentPath());
         $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
         if ($path === '/shop' && $method === 'GET') {
             $me = Auth::user();
@@ -532,6 +550,15 @@ class Shop
             ], 'Shop admin');
         }
         // Not ours — fall through to the core router.
+    }
+
+    private static function baseStripped(string $path): string
+    {
+        $bp = base_path();
+        if ($bp !== '' && ($path === $bp || str_starts_with($path, $bp . '/'))) {
+            $path = substr($path, strlen($bp)) ?: '/';
+        }
+        return $path;
     }
 
     /** @param array<string,mixed> $vars */

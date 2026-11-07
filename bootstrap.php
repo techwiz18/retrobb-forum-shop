@@ -24,4 +24,4 @@ Hooks::add_action('topic_created', [Shop::class, 'onTopicCreated']);
 Hooks::add_action('post_created', [Shop::class, 'onPostCreated']);
 Hooks::add_action('header', [Shop::class, 'headerChip']);
 Hooks::add_action('head', [Shop::class, 'headCss']);
-Hooks::add_template_hook('postbit_after', __DIR__ . '/views/flair.php');
+Hooks::add_action('footer', [Shop::class, 'footerFlair']);
