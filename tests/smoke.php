@@ -46,6 +46,11 @@ namespace RetroBB\Core {
         public static string $path = '/';
         public static function currentPath(): string { return self::$path; }
     }
+    class View
+    {
+        public static function partial(string $t, array $v = []): void { echo '<nav class="adminnav"></nav>'; }
+        public static function render(string $t, array $v = [], ?string $l = 'layout'): void {}
+    }
 }
 
 namespace RetroBB\Models {
