@@ -778,6 +778,7 @@ class Shop
             'ledger' => self::ledgerFor($uid),
             'rates' => self::rates(),
             'currency' => self::currency(),
+            'to' => substr(trim((string) ($_GET['to'] ?? '')), 0, 50),
         ], 'Wallet');
     }
 

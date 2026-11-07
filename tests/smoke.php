@@ -227,10 +227,10 @@ namespace {
     $html = Shop::usernameFlair('<a href="/members/alice.u1">alice</a>', ['id' => 1, 'username' => 'alice']);
     check('username filter accepts id-key rows', str_contains($html, 'shop-badge'));
     ob_start();
-    $post = ['user_id' => 1];
+    $post = ['user_id' => 1, 'username' => 'alice'];
     require dirname(__DIR__) . '/views/title.php';
     $html = (string) ob_get_clean();
-    check('title partial shows balance without title', !str_contains($html, 'Sage') && str_contains($html, 'shop-pbal'));
+    check('title partial shows balance without title', !str_contains($html, 'Sage') && str_contains($html, 'shop-pbal') && str_contains($html, '/wallet?to=alice'));
 
     $pdo->prepare('INSERT INTO shop_items (kind,name,price,payload) VALUES (?,?,?,?)')->execute(['title', 'Sage', 1, '']);
     $t1 = (int) $pdo->lastInsertId();
@@ -261,7 +261,7 @@ namespace {
     ob_start();
     Hooks::render_template_hook('profile_after', ['profile' => ['id' => 1, 'username' => 'alice']]);
     $html = (string) ob_get_clean();
-    check('profile card shows balance+flair', str_contains($html, 'Credits') && str_contains($html, 'Sage'));
+    check('profile card shows balance+flair', str_contains($html, 'Credits') && str_contains($html, 'Sage') && str_contains($html, '/wallet?to=alice'));
     ob_start();
     Hooks::render_template_hook('admin_nav', []);
     check('admin nav partial links shop admin', str_contains((string) ob_get_clean(), '/shop/admin'));
@@ -287,6 +287,12 @@ namespace {
     ob_start();
     Shop::walletPage();
     check('wallet page shows history', str_contains((string) ob_get_clean(), 'purchase'));
+    ob_start();
+    $_GET['to'] = 'bob';
+    Shop::walletPage();
+    $html = (string) ob_get_clean();
+    unset($_GET['to']);
+    check('wallet prefills gift recipient + headings', str_contains($html, 'Send a gift') && str_contains($html, 'Recent transactions') && str_contains($html, 'value="bob"'));
     Auth::$user = ['id' => 2, 'username' => 'bob', 'user_group' => 'member'];
     ob_start();
     Shop::adminPage();
