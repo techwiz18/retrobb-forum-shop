@@ -14,17 +14,20 @@ AdminCP → Plugins. No core changes required.
 - **Admin** at `/shop/admin` (admins only): add items, grant Credits, recent
   transactions.
 
-## How it works with stock hooks only
+## How it works on the new plugin APIs
 
-- Pages are served from the `boot` action (fires before the core router), so
-  no route API is needed.
-- Earn events reuse `topic_created` / `post_created`. `post_created` only
-  passes the topic id, so the plugin pays the newest *unawarded* post in that
-  topic — each post pays its real author exactly once, even if events race.
-- Balances live in `shop_wallet`, every movement is journaled in
-  `shop_ledger` (unique `post_id` + unique daily key = idempotent awards).
-  Tables self-create in `bootstrap.php`; buys deduct atomically
-  (`UPDATE … WHERE balance >= ?`).
+- **Routes** (`routes` action, RetroBB #19): `/shop`, `/shop/buy`, `/shop/equip`,
+  `/wallet`, `/shop/admin` register with core routing — canonical-host 301s,
+  method matching and the shared 404 come free. No more `boot`+`exit`.
+- **Display** (#17): Shop/Wallet links via `nav_links`, balance chip via
+  `userbox`, wallet card on profiles via `profile_after`.
+- **Postbit** (#18): badges + name glow via the `post_username_html` filter,
+  title via the `postbit_user` template hook — all server-side, no JS.
+- **Lifecycle** (#20): tables live in `migrations/001_shop.sql` (applied once
+  by `bin/migrate.php`); defaults seed on `plugin_enabled`; disable keeps all
+  data. Earn rates are plugin settings, editable on `/shop/admin`.
+- **Earn events**: `post_created` now passes post + author ids (direct award,
+  ledger-deduped); legacy single-arg calls still work via re-query fallback.
 
 ## Earn rates
 
@@ -43,10 +46,7 @@ docker run --rm -v $PWD:/p -w /p composer:2 php tests/smoke.php
 author payout, daily-once, atomic buy, no double-buy/double-charge, equip
 per-kind, route fall-through, admin gate, CSRF refusal, grant validation.
 
-## Known limits (filed as RetroBB core issues, not worked around here)
+## Known limits
 
-1. `boot`+`exit` routing bypasses core canonical-host enforcement on `/shop*`.
-2. `post_created`/`topic_created` should pass post + author ids.
-3. No nav-row/userbox/profile hooks (filed: RetroBB #17).
-4. No server-side postbit hook — flair needs JS DOM injection (filed: RetroBB #18).
-4. No plugin install/migrate/settings API (tables self-create; no uninstall).
+Adopted the new core APIs (RetroBB #17–#20); those issues stay open pending
+live confirmation on a real board.
