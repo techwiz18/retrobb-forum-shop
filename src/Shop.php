@@ -337,11 +337,12 @@ class Shop
 
     /**
      * post_username_html filter: glow on the name, nameless ★ badges left of
-     * it (names survive as tooltips). $post is the core post row.
+     * it (names survive as tooltips). Context may be a full row (user_id) or
+     * a partial one (id) depending on the calling view.
      */
     public static function usernameFlair(string $html, array $post): string
     {
-        $f = self::flairFor((int) ($post['user_id'] ?? 0));
+        $f = self::flairFor((int) ($post['user_id'] ?? $post['id'] ?? 0));
         if ($f['badges'] === [] && $f['glow'] === null) {
             return $html;
         }
@@ -519,6 +520,19 @@ class Shop
         } catch (\Throwable $t) {
             error_log('forum-shop grant failed: ' . $t->getMessage());
             return ['ok' => false, 'error' => 'Grant failed.'];
+        }
+    }
+
+    /** @return array{items:int,circulation:int} */
+    public static function stats(): array
+    {
+        try {
+            $pdo = Db::pdo();
+            $items = (int) $pdo->query('SELECT COUNT(*) FROM shop_items')->fetchColumn();
+            $circ = (int) $pdo->query('SELECT COALESCE(SUM(balance),0) FROM shop_wallet')->fetchColumn();
+            return ['items' => $items, 'circulation' => $circ];
+        } catch (\Throwable) {
+            return ['items' => 0, 'circulation' => 0];
         }
     }
 

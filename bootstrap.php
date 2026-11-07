@@ -27,6 +27,8 @@ try {
     Hooks::add_template_hook('userbox', __DIR__ . '/views/chip.php');
     Hooks::add_template_hook('profile_after', __DIR__ . '/views/card.php');
     Hooks::add_template_hook('postbit_user', __DIR__ . '/views/title.php');
+    Hooks::add_template_hook('admin_nav', __DIR__ . '/views/adminnav.php');
+    Hooks::add_template_hook('admin_dashboard', __DIR__ . '/views/dashcard.php');
 } catch (\Throwable $t) {
     error_log('forum-shop bootstrap failed: ' . $t->getMessage());
 }

@@ -189,6 +189,8 @@ namespace {
     Shop::equip(1, $b1);
     $html = Shop::usernameFlair('<a href="/members/alice.u1">alice</a>', ['user_id' => 1]);
     check('username filter adds star, keeps name', str_contains($html, 'shop-badge') && str_contains($html, '>alice</a>'));
+    $html = Shop::usernameFlair('<a href="/members/alice.u1">alice</a>', ['id' => 1, 'username' => 'alice']);
+    check('username filter accepts id-key rows', str_contains($html, 'shop-badge'));
     ob_start();
     $post = ['user_id' => 1];
     require dirname(__DIR__) . '/views/title.php';
@@ -225,6 +227,13 @@ namespace {
     Hooks::render_template_hook('profile_after', ['profile' => ['id' => 1, 'username' => 'alice']]);
     $html = (string) ob_get_clean();
     check('profile card shows balance+flair', str_contains($html, 'Credits') && str_contains($html, 'Sage'));
+    ob_start();
+    Hooks::render_template_hook('admin_nav', []);
+    check('admin nav partial links shop admin', str_contains((string) ob_get_clean(), '/shop/admin'));
+    ob_start();
+    Hooks::render_template_hook('admin_dashboard', []);
+    $html = (string) ob_get_clean();
+    check('dashboard card shows totals', str_contains($html, 'dash-card') && str_contains($html, 'Credits in circulation'));
 
     // --- page handlers (no core layout in harness: raw content) ---
     Auth::$user = ['id' => 1, 'username' => 'alice', 'user_group' => 'member'];
