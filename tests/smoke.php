@@ -226,11 +226,16 @@ namespace {
     check('username filter adds star, keeps name', str_contains($html, 'shop-badge') && str_contains($html, '>alice</a>'));
     $html = Shop::usernameFlair('<a href="/members/alice.u1">alice</a>', ['id' => 1, 'username' => 'alice']);
     check('username filter accepts id-key rows', str_contains($html, 'shop-badge'));
+    Auth::$user = ['id' => 2, 'username' => 'bob', 'user_group' => 'member'];
     ob_start();
     $post = ['user_id' => 1, 'username' => 'alice'];
     require dirname(__DIR__) . '/views/title.php';
     $html = (string) ob_get_clean();
     check('title partial shows balance without title', !str_contains($html, 'Sage') && str_contains($html, 'shop-pbal') && str_contains($html, '/wallet?to=alice'));
+    Auth::$user = ['id' => 1, 'username' => 'alice', 'user_group' => 'member'];
+    ob_start();
+    require dirname(__DIR__) . '/views/title.php';
+    check('no gift link on own postbit', !str_contains((string) ob_get_clean(), '/wallet?to='));
 
     $pdo->prepare('INSERT INTO shop_items (kind,name,price,payload) VALUES (?,?,?,?)')->execute(['title', 'Sage', 1, '']);
     $t1 = (int) $pdo->lastInsertId();
@@ -258,10 +263,15 @@ namespace {
     ob_start();
     Hooks::render_template_hook('userbox', ['user' => null]);
     check('userbox chip hides for guests', trim((string) ob_get_clean()) === '');
+    Auth::$user = ['id' => 2, 'username' => 'bob', 'user_group' => 'member'];
     ob_start();
     Hooks::render_template_hook('profile_after', ['profile' => ['id' => 1, 'username' => 'alice']]);
     $html = (string) ob_get_clean();
     check('profile card shows balance+flair', str_contains($html, 'Credits') && str_contains($html, 'Sage') && str_contains($html, '/wallet?to=alice'));
+    Auth::$user = ['id' => 1, 'username' => 'alice', 'user_group' => 'member'];
+    ob_start();
+    Hooks::render_template_hook('profile_after', ['profile' => ['id' => 1, 'username' => 'alice']]);
+    check('no gift link on own profile', !str_contains((string) ob_get_clean(), '/wallet?to='));
     ob_start();
     Hooks::render_template_hook('admin_nav', []);
     check('admin nav partial links shop admin', str_contains((string) ob_get_clean(), '/shop/admin'));
