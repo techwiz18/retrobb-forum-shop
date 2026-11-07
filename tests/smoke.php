@@ -192,7 +192,8 @@ namespace {
     ob_start();
     $post = ['user_id' => 1];
     require dirname(__DIR__) . '/views/title.php';
-    check('title partial empty without title', trim((string) ob_get_clean()) === '');
+    $html = (string) ob_get_clean();
+    check('title partial shows balance without title', !str_contains($html, 'Sage') && str_contains($html, 'shop-pbal'));
 
     $pdo->prepare('INSERT INTO shop_items (kind,name,price,payload) VALUES (?,?,?,?)')->execute(['title', 'Sage', 1, '']);
     $t1 = (int) $pdo->lastInsertId();

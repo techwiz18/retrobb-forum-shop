@@ -556,6 +556,7 @@ class Shop
         echo '<style>' .
             '.shop-badge{font-size:11px;font-weight:bold}' .
             '.shop-ptitle{font-size:11px;color:var(--muted);order:3}' .
+            '.shop-pbal{font-size:11px;color:var(--muted);order:6}' .
             '.postleft{display:flex;flex-direction:column;align-items:center;gap:2px}' .
             '.postleft .postuser{order:2}' .
             '.postleft .group{order:4}' .
