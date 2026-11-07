@@ -158,7 +158,7 @@ namespace {
     ob_start();
     Shop::footerFlair();
     $html = (string) ob_get_clean();
-    check('flair script carries badge data', str_contains($html, 'Gold Star') && str_contains($html, 'postbit[data-username]'));
+    check('flair script carries badge data', str_contains($html, 'Gold Star') && str_contains($html, 'postbit[data-username]') && str_contains($html, 'insertBefore') && str_contains($html, 'g.before(t)'));
     Router::$path = '/members/alice.u1';
     Shop::resetCache();
     ob_start();
