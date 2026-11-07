@@ -3,7 +3,7 @@
 <div class="maintitle">AdminCP — Shop</div>
 <?php \RetroBB\Core\View::partial('admin/_nav', ['active' => '']); ?>
 <p class="muted">Flair items and Credit grants. Purchases and awards are journaled below.</p>
-<div class="shop-anchors"><a href="#shop-add">Add item</a> · <a href="#shop-grant">Grant Credits</a> · <a href="#shop-rates">Earn rates</a> · <a href="#shop-items">Items (<?= count($items) ?>)</a> · <a href="#shop-ledger">Transactions</a></div>
+<div class="shop-anchors"><a href="#shop-add">Add item</a> · <a href="#shop-grant">Manage Credits</a> · <a href="#shop-rates">Earn rates</a> · <a href="#shop-items">Items (<?= count($items) ?>)</a> · <a href="#shop-ledger">Transactions</a></div>
 <div class="maintitle" id="shop-add">Add item</div>
 <form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
   <?= \RetroBB\Core\Csrf::field() ?>
@@ -14,13 +14,14 @@
   <div class="frow"><label for="shop-in-payload">Color (glow only)</label><input id="shop-in-payload" name="payload" placeholder="#c0392b" size="8" maxlength="7"></div>
   <button class="btn" type="submit">Add</button>
 </form>
-<div class="maintitle" id="shop-grant">Grant Credits</div>
+<div class="maintitle" id="shop-grant">Manage Credits</div>
 <form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">
   <?= \RetroBB\Core\Csrf::field() ?>
   <input type="hidden" name="shop_action" value="grant">
   <div class="frow"><label for="shop-in-user">User</label><input id="shop-in-user" name="username" size="20" required></div>
+  <div class="frow"><label for="shop-in-dir">Action</label><select id="shop-in-dir" name="direction"><option value="give">Give</option><option value="deduct">Deduct</option></select></div>
   <div class="frow"><label for="shop-in-amount">Amount</label><input id="shop-in-amount" name="amount" inputmode="numeric" size="8" required></div>
-  <button class="btn" type="submit">Grant</button>
+  <button class="btn" type="submit">Apply</button>
 </form>
 <div class="maintitle" id="shop-rates">Earn rates</div>
 <form class="shopform" method="post" action="<?= e(url('/shop/admin')) ?>">

@@ -516,6 +516,9 @@ class Shop
             if (!$u) {
                 return ['ok' => false, 'error' => 'No such user.'];
             }
+            if ($amount < 0 && self::balance((int) $u['id']) < abs($amount)) {
+                return ['ok' => false, 'error' => 'That user only has ' . self::balance((int) $u['id']) . ' Credits.'];
+            }
             return self::award((int) $u['id'], $amount, 'grant') ? ['ok' => true] : ['ok' => false, 'error' => 'Grant failed.'];
         } catch (\Throwable $t) {
             error_log('forum-shop grant failed: ' . $t->getMessage());
@@ -696,7 +699,11 @@ class Shop
         if ($action === 'add_item') {
             $r = self::addItem((string) ($_POST['name'] ?? ''), (string) ($_POST['kind'] ?? ''), (int) ($_POST['price'] ?? 0), (string) ($_POST['payload'] ?? ''));
         } elseif ($action === 'grant') {
-            $r = self::grant((string) ($_POST['username'] ?? ''), (int) ($_POST['amount'] ?? 0));
+            $amt = abs((int) ($_POST['amount'] ?? 0));
+            if (($_POST['direction'] ?? 'give') === 'deduct') {
+                $amt = -$amt;
+            }
+            $r = self::grant((string) ($_POST['username'] ?? ''), $amt);
         } elseif ($action === 'delete_item') {
             $r = self::deleteItem((int) ($_POST['item_id'] ?? 0));
         } elseif ($action === 'save_rates') {

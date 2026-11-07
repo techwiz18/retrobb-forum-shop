@@ -259,7 +259,7 @@ namespace {
     Auth::$user = ['id' => 3, 'username' => 'root', 'user_group' => 'admin'];
     ob_start();
     Shop::adminPage();
-    check('admin page renders', str_contains((string) ob_get_clean(), 'Grant Credits'));
+    check('admin page renders', str_contains((string) ob_get_clean(), 'Manage Credits'));
 
     // --- CSRF fail on buy submit: no charge ---
     $_SERVER['REQUEST_METHOD'] = 'POST';
@@ -280,6 +280,14 @@ namespace {
     } catch (TestRedirect $e) {
         check('grant submit redirects', $e->to === '/shop/admin' && Shop::balance(2) === 45);
     }
+    $_POST = ['csrf' => 't', 'shop_action' => 'grant', 'username' => 'bob', 'direction' => 'deduct', 'amount' => 5];
+    try {
+        Shop::adminSubmit();
+        check('deduct submit redirects', false);
+    } catch (TestRedirect $e) {
+        check('deduct submit deducts', $e->to === '/shop/admin' && Shop::balance(2) === 40);
+    }
+    check('deduct overdraft refused', !Shop::grant('bob', -1000)['ok'] && Shop::balance(2) === 40);
     $_POST = ['csrf' => 't', 'shop_action' => 'save_rates', 'earn_topic' => 11, 'earn_reply' => 6, 'earn_daily' => 3];
     try {
         Shop::adminSubmit();
