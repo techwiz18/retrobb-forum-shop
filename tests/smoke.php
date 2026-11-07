@@ -215,6 +215,12 @@ namespace {
     check('grant zero fails', !Shop::grant('alice', 0)['ok']);
     check('bad glow rejected', !Shop::addItem('X', 'glow', 5, 'red')['ok']);
     check('add item ok', Shop::addItem('Tester', 'title', 5, '')['ok']);
+    check('delete missing fails', !Shop::deleteItem(999999)['ok']);
+    Shop::addItem('Deleteme', 'badge', 5, '');
+    $delId = (int) $pdo->query("SELECT id FROM shop_items WHERE name='Deleteme'")->fetchColumn();
+    check('buy doomed item', Shop::buy(2, $delId)['ok']);
+    check('delete strips owners', Shop::deleteItem($delId)['ok'] && !isset(Shop::ownedMap(2)[$delId]));
+    check('deleted item unbuyable', Shop::buy(2, $delId)['error'] === 'No such item.');
 
     echo $fail === 0 ? "ALL PASS\n" : "$fail FAILURES\n";
     exit($fail === 0 ? 0 : 1);

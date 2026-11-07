@@ -30,7 +30,7 @@
 <div class="maintitle">Items (<?= count($items) ?>)</div>
 <div class="recent-list">
 <?php foreach ($items as $it): ?>
-<div class="recent-row"><span><b><?= e($it['name']) ?></b> <span class="muted">[<?= e($it['kind']) ?>]</span><?php if ($it['kind'] === 'glow'): ?> <span class="swatch" style="background:<?= e($it['payload']) ?>"></span><?php endif; ?></span><span class="muted"><?= (int) $it['price'] ?> Credits</span></div>
+<div class="recent-row"><span><b><?= e($it['name']) ?></b> <span class="muted">[<?= e($it['kind']) ?>]</span><?php if ($it['kind'] === 'glow'): ?> <span class="swatch" style="background:<?= e($it['payload']) ?>"></span><?php endif; ?></span><span><span class="muted"><?= (int) $it['price'] ?> Credits</span> <form method="post" action="<?= e(url('/shop/admin')) ?>" style="display:inline" onsubmit="return confirm('Delete this item? Owners lose it with no refund.')"><?= \RetroBB\Core\Csrf::field() ?><input type="hidden" name="shop_action" value="delete_item"><input type="hidden" name="item_id" value="<?= (int) $it['id'] ?>"><button class="smallbtn danger" type="submit">Delete</button></form></span></div>
 <?php endforeach; ?>
 <?php if (!$items): ?><div class="empty">No items yet.</div><?php endif; ?>
 </div>

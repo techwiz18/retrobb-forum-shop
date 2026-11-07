@@ -393,6 +393,35 @@ class Shop
         }
     }
 
+    /**
+     * Delete an item and strip it from all owners (no refunds — the Credits
+     * were spent). Ledger history is kept.
+     * @return array{ok:bool,error?:string}
+     */
+    public static function deleteItem(int $itemId): array
+    {
+        if ($itemId <= 0) {
+            return ['ok' => false, 'error' => 'No such item.'];
+        }
+        try {
+            $pdo = Db::pdo();
+            $st = $pdo->prepare('SELECT id FROM shop_items WHERE id = ?');
+            $st->execute([$itemId]);
+            if (!$st->fetch()) {
+                return ['ok' => false, 'error' => 'No such item.'];
+            }
+            $pdo->beginTransaction();
+            $pdo->prepare('DELETE FROM shop_inventory WHERE item_id = ?')->execute([$itemId]);
+            $pdo->prepare('DELETE FROM shop_items WHERE id = ?')->execute([$itemId]);
+            $pdo->commit();
+            self::$pageFlairCache = null;
+            return ['ok' => true];
+        } catch (\Throwable $t) {
+            error_log('forum-shop deleteItem failed: ' . $t->getMessage());
+            return ['ok' => false, 'error' => 'Could not delete item.'];
+        }
+    }
+
     /** @return array{ok:bool,error?:string} */
     public static function grant(string $username, int $amount): array
     {
@@ -538,6 +567,8 @@ class Shop
                     $r = self::addItem((string) ($_POST['name'] ?? ''), (string) ($_POST['kind'] ?? ''), (int) ($_POST['price'] ?? 0), (string) ($_POST['payload'] ?? ''));
                 } elseif ($action === 'grant') {
                     $r = self::grant((string) ($_POST['username'] ?? ''), (int) ($_POST['amount'] ?? 0));
+                } elseif ($action === 'delete_item') {
+                    $r = self::deleteItem((int) ($_POST['item_id'] ?? 0));
                 } else {
                     $r = ['ok' => false, 'error' => 'Unknown action.'];
                 }
