@@ -31,12 +31,49 @@ class Shop
     private static array $flairCache = [];
     /** @var bool */
     private static bool $seeded = false;
+    /** @var int */
+    private static int $savepoints = 0;
 
     public static function resetCache(): void
     {
         self::$balanceCache = [];
         self::$flairCache = [];
         self::$seeded = false;
+    }
+
+    /**
+     * Run $fn atomically without ever breaking a transaction we don't own.
+     * Core fires earn hooks INSIDE its own transactions: beginning (or
+     * rolling back) there would hijack core's work — the 500 that killed
+     * every new post. Own scope = real transaction; foreign scope = a
+     * savepoint that rolls back to itself on failure.
+     */
+    private static function transact(callable $fn): mixed
+    {
+        $pdo = Db::pdo();
+        if (!$pdo->inTransaction()) {
+            $pdo->beginTransaction();
+            try {
+                $r = $fn($pdo);
+                $pdo->commit();
+                return $r;
+            } catch (\Throwable $t) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $t;
+            }
+        }
+        $sp = 'forumshop_sp_' . (++self::$savepoints);
+        $pdo->exec("SAVEPOINT $sp");
+        try {
+            $r = $fn($pdo);
+            $pdo->exec("RELEASE SAVEPOINT $sp");
+            return $r;
+        } catch (\Throwable $t) {
+            $pdo->exec("ROLLBACK TO SAVEPOINT $sp");
+            throw $t;
+        }
     }
 
     // ---------------- settings ----------------
@@ -332,25 +369,22 @@ class Shop
             return false;
         }
         try {
-            $pdo = Db::pdo();
-            $pdo->beginTransaction();
-            $pdo->prepare('INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (?,?,?,?,?,?)')
-                ->execute([$postId, $uid, $delta, $reason, $day, date('Y-m-d H:i:s')]);
-            self::addBalance($pdo, $uid, $delta);
-            $pdo->commit();
-            unset(self::$balanceCache[$uid]);
-            return true;
-        } catch (\Throwable $e) {
-            try {
-                if (isset($pdo) && $pdo->inTransaction()) {
-                    $pdo->rollBack();
+            return (bool) self::transact(function (PDO $pdo) use ($uid, $delta, $reason, $postId, $day) {
+                try {
+                    $pdo->prepare('INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (?,?,?,?,?,?)')
+                        ->execute([$postId, $uid, $delta, $reason, $day, date('Y-m-d H:i:s')]);
+                } catch (\PDOException $e) {
+                    if ($e->getCode() === '23000') {
+                        return false; // already awarded: lost a duplicate-key race
+                    }
+                    throw $e;
                 }
-            } catch (\Throwable) {
-            }
-            if ($e instanceof \PDOException && $e->getCode() === '23000') {
-                return false; // already awarded: lost a duplicate-key race
-            }
-            error_log('forum-shop award failed: ' . $e->getMessage());
+                self::addBalance($pdo, $uid, $delta);
+                unset(self::$balanceCache[$uid]);
+                return true;
+            });
+        } catch (\Throwable $t) {
+            error_log('forum-shop award failed: ' . $t->getMessage());
             return false;
         }
     }
@@ -531,33 +565,48 @@ class Shop
             if ($st->fetch()) {
                 return ['ok' => false, 'error' => 'You already own this.'];
             }
-            $pdo->beginTransaction();
-            // Atomic deduct: exactly one concurrent buyer can win the funds.
-            // Free items skip the wallet entirely (new members have no row yet).
-            if ($price > 0) {
-                $st = $pdo->prepare('UPDATE shop_wallet SET balance = balance - ? WHERE user_id = ? AND balance >= ?');
-                $st->execute([$price, $uid, $price]);
-                if ($st->rowCount() === 0) {
-                    $pdo->rollBack();
+            try {
+                self::transact(function (PDO $pdo) use ($uid, $itemId, $price) {
+                    // Atomic deduct: exactly one concurrent buyer can win the funds.
+                    // Free items skip the wallet entirely (new members have no row yet).
+                    if ($price > 0) {
+                        $st = $pdo->prepare('UPDATE shop_wallet SET balance = balance - ? WHERE user_id = ? AND balance >= ?');
+                        $st->execute([$price, $uid, $price]);
+                        if ($st->rowCount() === 0) {
+                            throw new \RuntimeException('insufficient');
+                        }
+                    }
+                    try {
+                        $pdo->prepare('INSERT INTO shop_inventory (user_id, item_id, equipped) VALUES (?,?,0)')->execute([$uid, $itemId]);
+                        if ($price > 0) {
+                            $pdo->prepare("INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,'purchase',NULL,?)")
+                                ->execute([$uid, -$price, date('Y-m-d H:i:s')]);
+                        }
+                    } catch (\PDOException $e) {
+                        if ($e->getCode() !== '23000') {
+                            throw $e;
+                        }
+                        throw new \RuntimeException('owned');
+                    }
+                });
+            } catch (\RuntimeException $e) {
+                if ($e->getMessage() === 'insufficient') {
                     return ['ok' => false, 'error' => 'Not enough ' . self::currency() . '.'];
                 }
-            }
-            try {
-                $pdo->prepare('INSERT INTO shop_inventory (user_id, item_id, equipped) VALUES (?,?,0)')->execute([$uid, $itemId]);
-                if ($price > 0) {
-                    $pdo->prepare("INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,'purchase',NULL,?)")
-                        ->execute([$uid, -$price, date('Y-m-d H:i:s')]);
+                if ($e->getMessage() === 'owned') {
+                    // Lost a race after a successful deduct: refund outside the
+                    // rolled-back scope, then report the real outcome.
+                    if ($price > 0) {
+                        try {
+                            self::addBalance(Db::pdo(), $uid, $price);
+                            unset(self::$balanceCache[$uid]);
+                        } catch (\Throwable) {
+                        }
+                    }
+                    return ['ok' => false, 'error' => 'You already own this.'];
                 }
-            } catch (\PDOException $e) {
-                if ($e->getCode() !== '23000') {
-                    throw $e;
-                }
-                $pdo->rollBack();
-                self::addBalance($pdo, $uid, $price); // refund the lost race
-                unset(self::$balanceCache[$uid]);
-                return ['ok' => false, 'error' => 'You already own this.'];
+                throw $e;
             }
-            $pdo->commit();
             unset(self::$balanceCache[$uid], self::$flairCache[$uid]);
             return ['ok' => true];
         } catch (\Throwable $t) {
@@ -580,16 +629,17 @@ class Shop
             if (!$row) {
                 return ['ok' => false, 'error' => 'You do not own this.'];
             }
-            $pdo->beginTransaction();
-            if ((int) $row['equipped'] === 1) {
-                $pdo->prepare('UPDATE shop_inventory SET equipped = 0 WHERE user_id = ? AND item_id = ?')->execute([$uid, $itemId]);
-                $msg = 'Unequipped.';
-            } else {
-                $pdo->prepare('UPDATE shop_inventory SET equipped = 0 WHERE user_id = ? AND item_id IN (SELECT id FROM shop_items WHERE kind = ?)')->execute([$uid, (string) $row['kind']]);
+            $kind = (string) $row['kind'];
+            $equipped = (int) $row['equipped'];
+            $msg = self::transact(function (PDO $pdo) use ($uid, $itemId, $kind, $equipped) {
+                if ($equipped === 1) {
+                    $pdo->prepare('UPDATE shop_inventory SET equipped = 0 WHERE user_id = ? AND item_id = ?')->execute([$uid, $itemId]);
+                    return 'Unequipped.';
+                }
+                $pdo->prepare('UPDATE shop_inventory SET equipped = 0 WHERE user_id = ? AND item_id IN (SELECT id FROM shop_items WHERE kind = ?)')->execute([$uid, $kind]);
                 $pdo->prepare('UPDATE shop_inventory SET equipped = 1 WHERE user_id = ? AND item_id = ?')->execute([$uid, $itemId]);
-                $msg = 'Equipped.';
-            }
-            $pdo->commit();
+                return 'Equipped.';
+            });
             unset(self::$flairCache[$uid]);
             return ['ok' => true, 'message' => $msg];
         } catch (\Throwable $t) {
@@ -647,10 +697,10 @@ class Shop
             if (!$st->fetch()) {
                 return ['ok' => false, 'error' => 'No such item.'];
             }
-            $pdo->beginTransaction();
-            $pdo->prepare('DELETE FROM shop_inventory WHERE item_id = ?')->execute([$itemId]);
-            $pdo->prepare('DELETE FROM shop_items WHERE id = ?')->execute([$itemId]);
-            $pdo->commit();
+            self::transact(function (PDO $pdo) use ($itemId) {
+                $pdo->prepare('DELETE FROM shop_inventory WHERE item_id = ?')->execute([$itemId]);
+                $pdo->prepare('DELETE FROM shop_items WHERE id = ?')->execute([$itemId]);
+            });
             self::$flairCache = [];
             return ['ok' => true];
         } catch (\Throwable $t) {
@@ -712,19 +762,24 @@ class Shop
             if ($toUid === $fromUid) {
                 return ['ok' => false, 'error' => 'You cannot gift yourself.'];
             }
-            $pdo = Db::pdo();
-            $pdo->beginTransaction();
-            $st = $pdo->prepare('UPDATE shop_wallet SET balance = balance - ? WHERE user_id = ? AND balance >= ?');
-            $st->execute([$amount, $fromUid, $amount]);
-            if ($st->rowCount() === 0) {
-                $pdo->rollBack();
-                return ['ok' => false, 'error' => 'Not enough ' . self::currency() . '.'];
+            try {
+                self::transact(function (PDO $pdo) use ($fromUid, $toUid, $amount) {
+                    $st = $pdo->prepare('UPDATE shop_wallet SET balance = balance - ? WHERE user_id = ? AND balance >= ?');
+                    $st->execute([$amount, $fromUid, $amount]);
+                    if ($st->rowCount() === 0) {
+                        throw new \RuntimeException('insufficient');
+                    }
+                    self::addBalance($pdo, $toUid, $amount);
+                    $now = date('Y-m-d H:i:s');
+                    $pdo->prepare('INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,\'gift_sent\',NULL,?)')->execute([$fromUid, -$amount, $now]);
+                    $pdo->prepare('INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,\'gift_received\',NULL,?)')->execute([$toUid, $amount, $now]);
+                });
+            } catch (\RuntimeException $e) {
+                if ($e->getMessage() === 'insufficient') {
+                    return ['ok' => false, 'error' => 'Not enough ' . self::currency() . '.'];
+                }
+                throw $e;
             }
-            self::addBalance($pdo, $toUid, $amount);
-            $now = date('Y-m-d H:i:s');
-            $pdo->prepare('INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,\'gift_sent\',NULL,?)')->execute([$fromUid, -$amount, $now]);
-            $pdo->prepare('INSERT INTO shop_ledger (post_id, user_id, delta, reason, day, created_at) VALUES (NULL,?,?,\'gift_received\',NULL,?)')->execute([$toUid, $amount, $now]);
-            $pdo->commit();
             unset(self::$balanceCache[$fromUid], self::$balanceCache[$toUid]);
             return ['ok' => true];
         } catch (\Throwable $t) {

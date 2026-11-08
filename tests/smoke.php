@@ -412,6 +412,17 @@ namespace {
     check('migration heals double-seed', (int) $pdo->query("SELECT COUNT(*) FROM shop_items WHERE kind='badge' AND name='Gold Star'")->fetchColumn() === 1);
     $pdo->exec('CREATE UNIQUE INDEX uniq_shop_items_kind_name ON shop_items (kind, name)');
 
+    // --- award inside a foreign transaction joins it (live 500 regression) ---
+    // Core fires earn hooks INSIDE its own transaction. The old code began
+    // (boom: already active) then rolled back core's work, and core's commit
+    // died with "no active transaction". Savepoints must leave it intact.
+    $pdo->beginTransaction();
+    $pdo->exec("INSERT INTO posts (topic_id, user_id, body_bbcode) VALUES (1,2,'outer-tx')");
+    $txPid = (int) $pdo->lastInsertId();
+    Hooks::do_action('post_created', 1, $txPid, 2);
+    $pdo->commit();
+    check('award joins foreign transaction', Shop::balance(2) === 50);
+
     // --- uninstall: must come last (drops tables) ---
     $countTables = fn() => (int) $pdo->query("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('shop_wallet','shop_items','shop_inventory','shop_ledger')")->fetchColumn();
     Shop::onPluginUninstalled('some-other-plugin');
