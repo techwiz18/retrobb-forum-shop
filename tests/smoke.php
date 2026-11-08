@@ -222,7 +222,7 @@ namespace {
     $dave = (int) $pdo->lastInsertId();
     Shop::addItem('Freebie', 'badge', 0, '');
     $freeId = (int) $pdo->query("SELECT id FROM shop_items WHERE name='Freebie'")->fetchColumn();
-    check('free item needs no wallet row', Shop::buy($dave, $freeId)['ok'] && Shop::balance($dave) === 0 && isset(Shop::ownedMap($dave)[$freeId]));
+    check('free item needs no wallet row', Shop::buy($dave, $freeId)['ok'] && Shop::balance($dave) === 0 && isset(Shop::ownedMap($dave)[$freeId]) && (int) $pdo->query("SELECT COUNT(*) FROM shop_ledger WHERE user_id=$dave")->fetchColumn() === 0);
 
     // --- equip: one per kind, server-side flair ---
     $b1 = (int) $cheap['id'];
